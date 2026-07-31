@@ -7,6 +7,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
@@ -54,5 +55,12 @@ public class VideoUploadController {
             return ResponseEntity.internalServerError()
                     .body(Map.of("message", "Failed to store video."));
         }
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<?> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException exc) {
+        log.warn("File upload size exceeded limit: {}", exc.getMessage());
+        return ResponseEntity.status(413)
+                .body(Map.of("message", "File is too large! Maximum allowed upload size is 2GB."));
     }
 }

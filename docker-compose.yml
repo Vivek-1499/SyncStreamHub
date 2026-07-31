@@ -14,7 +14,7 @@ services:
       - syncstream-net
 
   mongodb:
-    image: mongo:6.0
+    image: mongo:7.0
     container_name: syncstream-mongo
     ports:
       - "27017:27017"
