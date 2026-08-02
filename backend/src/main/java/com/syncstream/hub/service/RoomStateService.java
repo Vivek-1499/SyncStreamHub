@@ -6,6 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -15,70 +18,83 @@ public class RoomStateService {
 
     private final RedisTemplate<String, Object> redisTemplate;
     private static final String ROOM_KEY_PREFIX = "room:state:";
+    private static final String ACTIVE_ROOMS_SET = "active_rooms";
     private static final long CACHE_TTL_HOURS = 24;
 
     private String getRedisKey(String roomId) {
         return ROOM_KEY_PREFIX + roomId;
     }
 
-    /**
-     * Checks if a watch party room exists in Redis.
-     */
     public boolean exists(String roomId) {
         String key = getRedisKey(roomId);
         return Boolean.TRUE.equals(redisTemplate.hasKey(key));
     }
 
-    /**
-     * Deletes a watch party room from Redis completely.
-     */
     public void deleteRoom(String roomId) {
         String key = getRedisKey(roomId);
         redisTemplate.delete(key);
+        redisTemplate.opsForSet().remove(ACTIVE_ROOMS_SET, roomId);
         log.info("Purged room state for '{}' from Redis cache", roomId);
     }
 
-    /**
-     * Creates and initializes a new watch party room state with an assigned host.
-     */
     public ActiveRoomState createRoom(String roomId, Long hostUserId, String hostUsername) {
-        log.info("Creating new Room: {} with Host: {} (ID: {})", roomId, hostUsername, hostUserId);
+        return createRoom(roomId, hostUserId, hostUsername, true, 10);
+    }
+
+    public ActiveRoomState createRoom(String roomId, Long hostUserId, String hostUsername, Boolean isPublic, Integer maxParticipants) {
+        log.info("Creating new Room: {} (isPublic: {}, maxParticipants: {}) with Host: {} (ID: {})", 
+                 roomId, isPublic, maxParticipants, hostUsername, hostUserId);
         
         ActiveRoomState state = ActiveRoomState.builder()
                 .roomId(roomId)
-                .videoUrl("https://vjs.zencdn.net/v/oceans.mp4") // Baseline video URL
-                .playing(false) // Updated builder parameter to match the renamed field
+                .videoUrl("https://vjs.zencdn.net/v/oceans.mp4")
+                .playing(false)
                 .playbackPosition(0.0)
                 .participantCount(0)
                 .lastUpdated(System.currentTimeMillis())
                 .hostUserId(hostUserId)
                 .hostUsername(hostUsername)
+                .isPublic(isPublic != null ? isPublic : true)
+                .maxParticipants(maxParticipants != null ? maxParticipants : 10)
                 .build();
                 
         saveRoomState(state);
         return state;
     }
 
-    /**
-     * Retrieves the active room state from Redis. Returns null if the room does not exist.
-     */
+    public ActiveRoomState updateRoomSettings(String roomId, Long userId, Boolean isPublic, Integer maxParticipants) {
+        ActiveRoomState state = getRoomState(roomId);
+        if (state == null) {
+            throw new IllegalArgumentException("Room '" + roomId + "' does not exist.");
+        }
+        if (state.getHostUserId() != null && !state.getHostUserId().equals(userId)) {
+            throw new SecurityException("Only the room host can update settings.");
+        }
+
+        if (isPublic != null) {
+            state.setPublic(isPublic);
+        }
+        if (maxParticipants != null) {
+            state.setMaxParticipants(maxParticipants);
+        }
+
+        saveRoomState(state);
+        log.info("Updated room '{}' settings: isPublic={}, maxParticipants={}", roomId, state.isPublic(), state.getMaxParticipants());
+        return state;
+    }
+
     public ActiveRoomState getRoomState(String roomId) {
         String key = getRedisKey(roomId);
         return (ActiveRoomState) redisTemplate.opsForValue().get(key);
     }
 
-    /**
-     * Saves or updates the room state in Redis with a 24-hour expiration.
-     */
     public void saveRoomState(ActiveRoomState state) {
         String key = getRedisKey(state.getRoomId());
         state.setLastUpdated(System.currentTimeMillis());
         redisTemplate.opsForValue().set(key, state, CACHE_TTL_HOURS, TimeUnit.HOURS);
+        redisTemplate.opsForSet().add(ACTIVE_ROOMS_SET, state.getRoomId());
     }
 
-    /**
-     * Safely increments the active participant count for a room.
-     */
     public ActiveRoomState incrementParticipantCount(String roomId) {
         ActiveRoomState state = getRoomState(roomId);
         if (state != null) {
@@ -89,9 +105,6 @@ public class RoomStateService {
         return state;
     }
 
-    /**
-     * Safely decrements the active participant count for a room.
-     */
     public ActiveRoomState decrementParticipantCount(String roomId) {
         ActiveRoomState state = getRoomState(roomId);
         if (state != null) {
@@ -101,5 +114,24 @@ public class RoomStateService {
             log.info("Participant left room {}. Count: {}", roomId, state.getParticipantCount());
         }
         return state;
+    }
+
+    public List<ActiveRoomState> getPublicRooms() {
+        Set<Object> roomIds = redisTemplate.opsForSet().members(ACTIVE_ROOMS_SET);
+        List<ActiveRoomState> rooms = new ArrayList<>();
+        if (roomIds != null) {
+            for (Object idObj : roomIds) {
+                String roomId = idObj.toString();
+                ActiveRoomState state = getRoomState(roomId);
+                if (state != null) {
+                    if (state.isPublic()) {
+                        rooms.add(state);
+                    }
+                } else {
+                    redisTemplate.opsForSet().remove(ACTIVE_ROOMS_SET, roomId);
+                }
+            }
+        }
+        return rooms;
     }
 }

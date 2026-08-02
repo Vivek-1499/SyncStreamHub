@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import ReactPlayer from 'react-player';
 import { useWebSocket } from '../hooks/useWebSocket';
-import type { ActiveRoomState, ChatEvent, WatchPartyHistory } from '../types';
+import { FriendsModal } from './FriendsModal';
+import type { ActiveRoomState, ChatEvent, WatchPartyHistory, InviteEvent } from '../types';
 
 interface WatchPartyRoomProps {
   roomId: string;
@@ -14,7 +15,17 @@ interface WatchPartyRoomProps {
 interface FloatingEmoji {
   id: number;
   emoji: string;
-  offset: number; // random horizontal offset (percentage)
+  right: number;
+  size: number;
+  delay: number;
+  driftX: number;
+  duration: number;
+}
+
+interface InRoomFriendRequest {
+  id: number;
+  senderId: number;
+  senderUsername: string;
 }
 
 export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
@@ -25,8 +36,6 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   onLogout,
 }) => {
   const playerRef = useRef<React.ElementRef<typeof ReactPlayer> | null>(null);
-
-  // Guard flag to prevent infinite STOMP sync loops
   const isProcessingIncomingEvent = useRef<boolean>(false);
 
   const [roomState, setRoomState] = useState<ActiveRoomState | null>(null);
@@ -36,31 +45,79 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   const [newVideoUrl, setNewVideoUrl] = useState('');
   const [floatingEmojis, setFloatingEmojis] = useState<FloatingEmoji[]>([]);
   const [localPlaying, setLocalPlaying] = useState(false);
+  
+  const [volume, setVolume] = useState<number>(0.8);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+
   type VideoSourceType = 'url' | 'device';
-
   const [sourceType, setSourceType] = useState<VideoSourceType>('url');
-  const [localFileName, setLocalFileName] = useState<string>('');
 
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const [showFriendsModal, setShowFriendsModal] = useState(false);
+  const [inviteNotification, setInviteNotification] = useState<InviteEvent | null>(null);
+  const [notificationCount, setNotificationCount] = useState<number>(0);
+  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
+
+  const [editIsPublic, setEditIsPublic] = useState<boolean>(true);
+  const [editMaxParticipants, setEditMaxParticipants] = useState<number>(10);
+
+  const [selectedChatUser, setSelectedChatUser] = useState<string | null>(null);
+  const [chatUserStatus, setChatUserStatus] = useState<string>('');
+  const [inRoomFriendRequest, setInRoomFriendRequest] = useState<InRoomFriendRequest | null>(null);
+
+  const chatMessagesContainerRef = useRef<HTMLDivElement | null>(null);
   const isHost = roomState ? userId === roomState.hostUserId : false;
+  const token = localStorage.getItem('syncstream_token');
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
 
-  // Safe seekTo helper that handles direct class instance methods, nested structures, and HTML5 video fallbacks
   const seekTo = (seconds: number) => {
     if (!playerRef.current) return;
-    (playerRef.current as unknown as HTMLMediaElement).currentTime = seconds;
+    if (typeof (playerRef.current as any).seekTo === 'function') {
+      (playerRef.current as any).seekTo(seconds, 'seconds');
+    } else if ((playerRef.current as unknown as HTMLMediaElement).currentTime !== undefined) {
+      (playerRef.current as unknown as HTMLMediaElement).currentTime = seconds;
+    }
   };
 
   const getCurrentTime = (): number => {
     if (!playerRef.current) return 0;
+    if (typeof (playerRef.current as any).getCurrentTime === 'function') {
+      return (playerRef.current as any).getCurrentTime() || 0;
+    }
     return (playerRef.current as unknown as HTMLMediaElement).currentTime || 0;
   };
 
-  // 1. Fetch initial state & history on component load
-  useEffect(() => {
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/rooms';
+  const checkNotifications = useCallback(async () => {
+    if (!token) return;
+    try {
+      const [reqRes, invRes] = await Promise.all([
+        fetch(`${apiUrl}/friends/requests/pending`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${apiUrl}/rooms/invites/pending`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      let count = 0;
+      if (reqRes.ok) {
+        const reqs = await reqRes.json();
+        count += reqs.length;
+      }
+      if (invRes.ok) {
+        const invs = await invRes.json();
+        count += invs.length;
+      }
+      setNotificationCount(count);
+    } catch (e) {
+      console.error('Error checking notifications', e);
+    }
+  }, [token, apiUrl]);
 
-    // Fetch Room State
-    fetch(`${apiUrl}/${roomId}`)
+  useEffect(() => {
+    checkNotifications();
+    const interval = setInterval(checkNotifications, 15000);
+    return () => clearInterval(interval);
+  }, [checkNotifications]);
+
+  useEffect(() => {
+    const roomApiUrl = `${apiUrl}/rooms`;
+
+    fetch(`${roomApiUrl}/${roomId}?userId=${userId}`)
       .then((res) => {
         if (!res.ok) throw new Error('Failed to fetch room state');
         return res.json();
@@ -68,12 +125,12 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
       .then((data: ActiveRoomState) => {
         setRoomState(data);
         setLocalPlaying(data.playing);
-        // Note: The initial seek is triggered inside handlePlayerReady once ReactPlayer is loaded in the DOM
+        if (data.isPublic !== undefined) setEditIsPublic(data.isPublic);
+        if (data.maxParticipants !== undefined) setEditMaxParticipants(data.maxParticipants);
       })
       .catch((err) => console.error('Error fetching room state:', err));
 
-    // Fetch Room Chat & Session History
-    fetch(`${apiUrl}/${roomId}/history`)
+    fetch(`${roomApiUrl}/${roomId}/history`)
       .then((res) => {
         if (!res.ok) throw new Error('Failed to fetch room history');
         return res.json();
@@ -97,59 +154,62 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
         }
       })
       .catch((err) => console.error('Error loading room history:', err));
-  }, [roomId]);
+  }, [roomId, userId, apiUrl]);
 
-  // Scroll chat list to bottom
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatMessagesContainerRef.current) {
+      chatMessagesContainerRef.current.scrollTo({
+        top: chatMessagesContainerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
+    }
   }, [chats]);
 
-  // Player onReady Callback (Ensures media is active before seek actions are issued)
   const handlePlayerReady = () => {
     console.log('[ReactPlayer] Player loaded and ready');
     if (roomState) {
-      // Suppress the player's own internal startup seek/pause events
-      // for everyone, host included, not just viewers.
       isProcessingIncomingEvent.current = true;
-
       if (!isHost) {
-        console.log(`[ReactPlayer] Initial position sync: seeking to ${roomState.playbackPosition}s`);
         seekTo(roomState.playbackPosition);
       }
-
       setLocalPlaying(roomState.playing);
-
       setTimeout(() => {
         isProcessingIncomingEvent.current = false;
-      }, 1000); // give the player enough time to fully settle before trusting seek events
+      }, 1000);
     }
   };
 
-  // WebSocket Callbacks
   const handleRoomStateReceived = (newState: ActiveRoomState) => {
     setRoomState(newState);
+    if (newState.isPublic !== undefined) setEditIsPublic(newState.isPublic);
+    if (newState.maxParticipants !== undefined) setEditMaxParticipants(newState.maxParticipants);
 
-    // Viewers stay strictly synchronized with the Host's position
     const viewerIsHost = userId === newState.hostUserId;
     if (!viewerIsHost) {
       setLocalPlaying(newState.playing);
-
       if (playerRef.current) {
         const currentPlayerTime = getCurrentTime();
         const timeDelta = Math.abs(currentPlayerTime - newState.playbackPosition);
 
-        // If viewer drifts by more than 1.5 seconds, force a seek sync
-        if (timeDelta > 1.5) {
-          console.log(`[Sync Event] Drift of ${timeDelta.toFixed(1)}s detected. Syncing to ${newState.playbackPosition.toFixed(1)}s`);
-          isProcessingIncomingEvent.current = true;
-          seekTo(newState.playbackPosition);
-          setTimeout(() => {
-            isProcessingIncomingEvent.current = false;
-          }, 200);
+        if (!newState.playing) {
+          if (timeDelta > 0.5) {
+            isProcessingIncomingEvent.current = true;
+            seekTo(newState.playbackPosition);
+            setTimeout(() => {
+              isProcessingIncomingEvent.current = false;
+            }, 300);
+          }
+        } else {
+          if (timeDelta > 1.5) {
+            isProcessingIncomingEvent.current = true;
+            seekTo(newState.playbackPosition);
+            setTimeout(() => {
+              isProcessingIncomingEvent.current = false;
+            }, 300);
+          }
         }
       }
     } else {
-      // If we are the Host, update localPlaying if the video URL changed
       if (roomState && roomState.videoUrl !== newState.videoUrl) {
         setLocalPlaying(newState.playing);
       }
@@ -161,44 +221,66 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   };
 
   const handleEmojiReceived = (emojiEvent: ChatEvent) => {
-    const offset = Math.floor(Math.random() * 80) + 10;
-    const newEmoji: FloatingEmoji = {
-      id: Date.now() + Math.random(),
+    const count = Math.floor(Math.random() * 2) + 4;
+    const streamBatch: FloatingEmoji[] = Array.from({ length: count }, (_, i) => ({
+      id: Date.now() + Math.random() + i,
       emoji: emojiEvent.message,
-      offset,
-    };
+      right: 5 + Math.random() * 18,
+      size: 1.6 + Math.random() * 0.8,
+      delay: i * 0.03,
+      driftX: (Math.random() - 0.5) * 45,
+      duration: 1.8,
+    }));
 
-    setFloatingEmojis((prev) => [...prev, newEmoji]);
+    setFloatingEmojis((prev) => [...prev, ...streamBatch]);
 
     setTimeout(() => {
-      setFloatingEmojis((prev) => prev.filter((e) => e.id !== newEmoji.id));
-    }, 3000);
+      const batchIds = new Set(streamBatch.map((item) => item.id));
+      setFloatingEmojis((prev) => prev.filter((e) => !batchIds.has(e.id)));
+    }, 2800);
   };
 
-  // Connect STOMP socket hook
-  const { connected, sendSyncEvent, sendChatMessage, sendEmoji } = useWebSocket({
+  const handleInviteReceived = (invite: InviteEvent) => {
+    setInviteNotification(invite);
+    setNotificationCount(prev => prev + 1);
+  };
+
+  const handleFriendRequestReceived = (data: any) => {
+    setInRoomFriendRequest({
+      id: data.id,
+      senderId: data.senderId,
+      senderUsername: data.senderUsername,
+    });
+    setNotificationCount(prev => prev + 1);
+  };
+
+  const { connected, sendSyncEvent, sendChatMessage, sendEmoji, sendPartyInvite } = useWebSocket({
     roomId,
     userId,
     username,
+    token,
     onRoomStateReceived: handleRoomStateReceived,
     onChatMessageReceived: handleChatMessageReceived,
     onEmojiReceived: handleEmojiReceived,
+    onInviteReceived: handleInviteReceived,
+    onFriendRequestReceived: handleFriendRequestReceived,
   });
 
-  // Local Player Action Hooks (Only the Host can broadcast these)
   const handleLocalPlay = () => {
     if (isProcessingIncomingEvent.current) return;
     if (isHost && playerRef.current) {
-      console.log('[Play Sync] Broadcast PLAY');
       setLocalPlaying(true);
       sendSyncEvent('PLAY', getCurrentTime());
+    } else {
+      if (roomState && !roomState.playing) {
+        setLocalPlaying(false);
+      }
     }
   };
 
   const handleLocalPause = () => {
     if (isProcessingIncomingEvent.current) return;
     if (isHost && playerRef.current) {
-      console.log('[Pause Sync] Broadcast PAUSE');
       setLocalPlaying(false);
       sendSyncEvent('PAUSE', getCurrentTime());
     }
@@ -207,16 +289,11 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   const handleLocalSeek = (seconds: number) => {
     if (isProcessingIncomingEvent.current) return;
     if (isHost) {
-      console.log(`[Seek Sync] Broadcast SEEK to ${seconds.toFixed(1)}s`);
       sendSyncEvent('SEEK', seconds);
     }
   };
 
-  // Change Video URL (Host control only)
-  const handleLocalFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) setLocalFileName(file.name);
-  };
+  const handleLocalFileSelect = (_e: React.ChangeEvent<HTMLInputElement>) => {};
 
   const handleChangeVideo = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -229,24 +306,62 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
       return;
     }
 
-    // Device mode: actually upload the bytes
     const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
     const file = fileInput?.files?.[0];
     if (!file) return;
 
     const formData = new FormData();
     formData.append('file', file);
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
     try {
       const res = await fetch(`${apiUrl}/uploads/video`, { method: 'POST', body: formData });
       if (!res.ok) throw new Error('Upload failed');
       const data: { url: string } = await res.json();
-      sendSyncEvent('CHANGE_VIDEO', 0, data.url); // now a real, shared URL
+      sendSyncEvent('CHANGE_VIDEO', 0, data.url);
     } catch (err) {
       console.error('Video upload failed', err);
     }
   };
-  // Chat send
+
+  const handleSaveRoomSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isHost || !token) return;
+    try {
+      const res = await fetch(
+        `${apiUrl}/rooms/${roomId}/settings?isPublic=${editIsPublic}&maxParticipants=${editMaxParticipants}`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (res.ok) {
+        const updated: ActiveRoomState = await res.json();
+        setRoomState(updated);
+        setShowSettingsModal(false);
+      }
+    } catch (e) {
+      console.error('Failed to update room settings', e);
+    }
+  };
+
+  const handleSendChatFriendRequest = async (targetUsername: string) => {
+    if (!token) return;
+    setChatUserStatus('');
+    try {
+      const res = await fetch(`${apiUrl}/friends/request?username=${encodeURIComponent(targetUsername)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setChatUserStatus(`🎉 Friend request sent to ${targetUsername}!`);
+      } else {
+        setChatUserStatus(`⚠️ ${data.message || 'Failed to send request'}`);
+      }
+    } catch (e) {
+      setChatUserStatus('⚠️ Server error sending friend request');
+    }
+  };
+
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatMessage.trim()) return;
@@ -258,25 +373,65 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
 
   return (
     <div className="room-container">
+      {/* Invite Toast Notification */}
+      {inviteNotification && (
+        <div className="invite-toast glass-card fade-in">
+          <span>📩 <strong>{inviteNotification.senderUsername}</strong> invited you to watch party <strong>'{inviteNotification.roomId}'</strong>!</span>
+          <div className="invite-toast-actions">
+            <button
+              className="btn-primary"
+              onClick={() => {
+                const targetRoom = inviteNotification.roomId;
+                setInviteNotification(null);
+                localStorage.setItem('syncstream_roomId', targetRoom);
+                window.location.reload();
+              }}
+            >
+              Join Party
+            </button>
+            <button className="btn-secondary" onClick={() => setInviteNotification(null)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="room-header glass-card">
         <div className="header-brand">
           <span className="brand-logo">🍿</span>
           <h2>Room: <span className="highlight-text">{roomId}</span></h2>
+          <span className={`room-visibility-badge ${roomState?.isPublic ? 'public' : 'private'}`}>
+            {roomState?.isPublic ? '🌐 Public' : '🔒 Private'}
+          </span>
         </div>
 
         <div className="host-badge">
           👑 Host: <span className="highlight-text">{roomState?.hostUsername || 'Unknown'}</span>
           {isHost && <span className="host-badge-you">(You)</span>}
+          {isHost && (
+            <button
+              className="btn-secondary settings-cog-btn"
+              onClick={() => setShowSettingsModal(true)}
+              title="Room Control Settings"
+            >
+              ⚙️ Controls
+            </button>
+          )}
         </div>
 
         <div className="header-status">
+          <button className="btn-primary friends-btn relative-badge-btn" onClick={() => setShowFriendsModal(true)}>
+            👥 Friends & Invites
+            {notificationCount > 0 && <span className="notification-red-dot">{notificationCount}</span>}
+          </button>
           <div className="connection-badge">
             <span className={`status-dot ${connected ? 'online' : 'offline'}`}></span>
             {connected ? 'Connected' : 'Reconnecting...'}
           </div>
           <div className="participants-badge">
-            👥 {roomState?.participantCount || 0} watching
+            👥 {roomState?.participantCount || 0}
+            {roomState?.maxParticipants ? `/${roomState.maxParticipants}` : ''} watching
           </div>
           <button className="btn-secondary exit-btn" onClick={onExit}>
             Leave Room
@@ -290,15 +445,14 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
       {/* Main Workspace Layout */}
       <div className="room-workspace">
         <div className="video-section glass-card">
-
-          {/* React Player Wrapper */}
           <div className="player-wrapper">
             <ReactPlayer
               ref={playerRef}
               src={roomState?.videoUrl}
               playing={localPlaying}
-              muted={!isHost}
-              controls={isHost} // Only the Host has scrub/play buttons
+              volume={volume}
+              muted={isMuted}
+              controls={isHost}
               width="100%"
               height="100%"
               className="react-player"
@@ -308,30 +462,61 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
               onSeeked={() => handleLocalSeek(getCurrentTime())}
             />
 
-            {/* Floating Emojis Fly Animation Overlay */}
             <div className="emoji-fly-container">
               {floatingEmojis.map((item) => (
                 <span
                   key={item.id}
-                  className="floating-emoji animate-float"
-                  style={{ left: `${item.offset}%` }}
+                  className="floating-emoji hotstar-stream-emoji"
+                  style={{
+                    right: `${item.right}%`,
+                    fontSize: `${item.size}rem`,
+                    animationDelay: `${item.delay}s`,
+                    animationDuration: `${item.duration}s`,
+                    ['--drift-x' as string]: `${item.driftX}px`,
+                  } as React.CSSProperties}
                 >
                   {item.emoji}
                 </span>
               ))}
             </div>
 
-            {/* Viewer Block Overlay to prevent clicking raw video elements to pause */}
-            {!isHost && (
-              <div className="player-blocker-overlay" />
-            )}
+            {!isHost && <div className="player-blocker-overlay" />}
           </div>
 
-          {/* Host Control Toolbar */}
           <div className="player-toolbar">
             <div className="video-info">
               <h3>Currently Playing:</h3>
-              <code className="video-url">{roomState?.videoUrl}</code>
+              <code className="video-url">{roomState?.videoUrl || 'No video loaded'}</code>
+            </div>
+
+            <div className="volume-control-dock">
+              <button
+                type="button"
+                className="volume-btn"
+                onClick={() => setIsMuted(!isMuted)}
+                title={isMuted ? 'Unmute' : 'Mute'}
+              >
+                {isMuted || volume === 0 ? '🔇' : volume < 0.5 ? '🔉' : '🔊'}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={isMuted ? 0 : volume}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  setVolume(val);
+                  if (val > 0 && isMuted) {
+                    setIsMuted(false);
+                  }
+                }}
+                className="volume-slider"
+                title="Local Volume"
+              />
+              <span className="volume-percentage">
+                {isMuted ? 'Muted' : `${Math.round(volume * 100)}%`}
+              </span>
             </div>
 
             {isHost ? (
@@ -367,11 +552,10 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                 </button>
               </form>
             ) : (
-              <div className="viewer-locked-indicator">🔒 Playback controls synced to Host</div>
+              <div className="viewer-locked-indicator">🔒 Playback synced to Host</div>
             )}
           </div>
 
-          {/* Emojis Reactions Dock */}
           <div className="emoji-reactions-dock">
             <h4>Tap Reactions:</h4>
             <div className="reaction-buttons">
@@ -387,7 +571,6 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
             </div>
           </div>
 
-          {/* Room event log feed */}
           <div className="system-logs-container">
             <h4>Room Event Log (MongoDB Audit Feed)</h4>
             <div className="system-logs-list">
@@ -399,12 +582,11 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
           </div>
         </div>
 
-        {/* Chat sidebar panel */}
         <aside className="chat-section glass-card">
           <div className="chat-header">
             <h3>Interactive Chat</h3>
           </div>
-          <div className="chat-messages-container">
+          <div className="chat-messages-container" ref={chatMessagesContainerRef}>
             {chats.length === 0 ? (
               <div className="empty-chat-message">
                 <span className="chat-icon">💬</span>
@@ -417,7 +599,18 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                   className={`chat-bubble-wrapper ${chat.userId === userId ? 'own-message' : ''}`}
                 >
                   <div className="chat-meta">
-                    <span className="chat-sender">{chat.username}</span>
+                    <span
+                      className="chat-sender clickable-sender"
+                      onClick={() => {
+                        if (chat.username !== username) {
+                          setSelectedChatUser(chat.username);
+                          setChatUserStatus('');
+                        }
+                      }}
+                      title={chat.username !== username ? `Click to add ${chat.username} as friend` : undefined}
+                    >
+                      👤 {chat.username}
+                    </span>
                     {chat.timestamp && (
                       <span className="chat-time">
                         {new Date(chat.timestamp).toLocaleTimeString([], {
@@ -431,7 +624,6 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                 </div>
               ))
             )}
-            <div ref={chatEndRef} />
           </div>
           <form className="chat-input-form" onSubmit={handleSendChat}>
             <input
@@ -448,6 +640,146 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
           </form>
         </aside>
       </div>
+
+      {/* Selected Chat User Popover Modal */}
+      {selectedChatUser && (
+        <div className="friends-modal-overlay">
+          <div className="friends-modal glass-card fade-in chat-user-modal">
+            <div className="modal-header">
+              <h2>👤 {selectedChatUser}</h2>
+              <button className="close-btn" onClick={() => setSelectedChatUser(null)}>✕</button>
+            </div>
+            <div className="modal-content text-center">
+              <p>Send a friend request to <strong>{selectedChatUser}</strong>?</p>
+              {chatUserStatus && <div className="modal-status-msg">{chatUserStatus}</div>}
+              <div className="action-btns" style={{ justifyContent: 'center', marginTop: '1rem', gap: '1rem' }}>
+                <button className="btn-primary" onClick={() => handleSendChatFriendRequest(selectedChatUser)}>
+                  ➕ Add Friend
+                </button>
+                <button className="btn-secondary" onClick={() => setSelectedChatUser(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Real-time In-Room Friend Request Acceptance Modal */}
+      {inRoomFriendRequest && (
+        <div className="friends-modal-overlay">
+          <div className="friends-modal glass-card fade-in friend-req-modal">
+            <div className="modal-header">
+              <h2>🎉 Friend Request Received!</h2>
+              <button className="close-btn" onClick={() => setInRoomFriendRequest(null)}>✕</button>
+            </div>
+            <div className="modal-content text-center">
+              <p>👤 <strong>{inRoomFriendRequest.senderUsername}</strong> sent you a friend request!</p>
+              <div className="action-btns" style={{ justifyContent: 'center', marginTop: '1rem', gap: '1rem' }}>
+                <button
+                  className="btn-primary"
+                  onClick={async () => {
+                    if (!token) return;
+                    try {
+                      await fetch(`${apiUrl}/friends/accept/${inRoomFriendRequest.id}`, {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${token}` },
+                      });
+                      setInRoomFriendRequest(null);
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }}
+                >
+                  Accept Request
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={async () => {
+                    if (!token) return;
+                    try {
+                      await fetch(`${apiUrl}/friends/decline/${inRoomFriendRequest.id}`, {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${token}` },
+                      });
+                      setInRoomFriendRequest(null);
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }}
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Host Room Control Settings Modal */}
+      {showSettingsModal && (
+        <div className="friends-modal-overlay">
+          <div className="friends-modal glass-card fade-in settings-modal">
+            <div className="modal-header">
+              <h2>⚙️ Host Control Settings</h2>
+              <button className="close-btn" onClick={() => setShowSettingsModal(false)}>✕</button>
+            </div>
+            <form onSubmit={handleSaveRoomSettings} className="lobby-form modal-content">
+              <div className="form-group">
+                <label htmlFor="modal-room-visibility">Room Visibility</label>
+                <select
+                  id="modal-room-visibility"
+                  value={editIsPublic ? 'public' : 'private'}
+                  onChange={(e) => setEditIsPublic(e.target.value === 'public')}
+                  className="lobby-input lobby-select"
+                >
+                  <option value="public">🌐 Public Party (Visible in Directory)</option>
+                  <option value="private">🔒 Private Party (Invite / Direct Link Only)</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="modal-max-participants">Maximum Participant Limit</label>
+                <select
+                  id="modal-max-participants"
+                  value={editMaxParticipants}
+                  onChange={(e) => setEditMaxParticipants(parseInt(e.target.value, 10))}
+                  className="lobby-input lobby-select"
+                >
+                  <option value={2}>2 Viewers</option>
+                  <option value={5}>5 Viewers</option>
+                  <option value={10}>10 Viewers</option>
+                  <option value={20}>20 Viewers</option>
+                  <option value={50}>50 Viewers</option>
+                  <option value={0}>Unlimited</option>
+                </select>
+              </div>
+
+              <div className="action-btns" style={{ marginTop: '1.5rem', gap: '1rem' }}>
+                <button type="submit" className="btn-primary">Save Settings</button>
+                <button type="button" className="btn-secondary" onClick={() => setShowSettingsModal(false)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showFriendsModal && (
+        <FriendsModal
+          token={token}
+          currentRoomId={roomId}
+          onClose={() => {
+            setShowFriendsModal(false);
+            checkNotifications();
+          }}
+          onInviteFriend={(targetUserId) => sendPartyInvite(targetUserId)}
+          onJoinRoom={(targetRoomId) => {
+            localStorage.setItem('syncstream_roomId', targetRoomId);
+            window.location.reload();
+          }}
+          onNotificationCountChange={(count) => setNotificationCount(count)}
+        />
+      )}
     </div>
   );
 };

@@ -4,8 +4,10 @@ import com.syncstream.hub.model.mongo.ChatMessageEntry;
 import com.syncstream.hub.model.mongo.SessionLogEntry;
 import com.syncstream.hub.model.redis.ActiveRoomState;
 import com.syncstream.hub.model.websocket.ChatEvent;
+import com.syncstream.hub.model.websocket.InviteEvent;
+import com.syncstream.hub.model.websocket.RtcSignalEvent;
 import com.syncstream.hub.model.websocket.SyncEvent;
-import com.syncstream.hub.model.websocket.RtcSignalEvent; // (Keep in case needed, or remove. Let's keep it safe)
+import com.syncstream.hub.service.RoomInviteService;
 import com.syncstream.hub.service.RoomStateService;
 import com.syncstream.hub.service.WatchPartyService;
 import lombok.RequiredArgsConstructor;
@@ -26,12 +28,9 @@ public class SyncWebSocketController {
 
     private final RoomStateService roomStateService;
     private final WatchPartyService watchPartyService;
+    private final RoomInviteService roomInviteService;
     private final SimpMessagingTemplate messagingTemplate;
 
-    /**
-     * Handles playback synchronization events (PLAY, PAUSE, SEEK, JOIN, LEAVE, CHANGE_VIDEO).
-     * Destination: /app/room/{roomId}/sync
-     */
     @MessageMapping("/room/{roomId}/sync")
     public void handlePlaybackSync(@DestinationVariable String roomId, 
                                    SyncEvent event, 
@@ -47,7 +46,6 @@ public class SyncWebSocketController {
         
         switch (event.getAction().toUpperCase()) {
             case "JOIN":
-                // Save user tracking info in WebSocket session attributes
                 if (headerAccessor.getSessionAttributes() != null) {
                     headerAccessor.getSessionAttributes().put("roomId", roomId);
                     headerAccessor.getSessionAttributes().put("username", event.getUsername());
@@ -91,7 +89,6 @@ public class SyncWebSocketController {
                 break;
         }
 
-        // Asynchronously log the activity into MongoDB
         SessionLogEntry sessionLog = SessionLogEntry.builder()
                 .action(event.getAction())
                 .playbackPosition(event.getPlaybackPosition())
@@ -101,25 +98,18 @@ public class SyncWebSocketController {
                 .build();
         watchPartyService.logSessionEventAsync(roomId, sessionLog);
 
-        // Broadcast the active room state back to all subscribers of the room
         messagingTemplate.convertAndSend("/topic/room/" + roomId, activeState);
     }
 
-    /**
-     * Handles chat messages within the watch room.
-     * Destination: /app/room/{roomId}/chat
-     */
     @MessageMapping("/room/{roomId}/chat")
     public void handleChatMessage(@DestinationVariable String roomId, ChatEvent event) {
         log.info("Received chat message from user {} in room {}", event.getUsername(), roomId);
 
-        // Ensure the event details are normalized
         if (event.getId() == null) {
             event.setId(UUID.randomUUID().toString());
         }
         event.setTimestamp(System.currentTimeMillis());
 
-        // Asynchronously log the message into MongoDB
         ChatMessageEntry chatEntry = ChatMessageEntry.builder()
                 .id(event.getId())
                 .userId(event.getUserId())
@@ -129,20 +119,36 @@ public class SyncWebSocketController {
                 .build();
         watchPartyService.saveChatMessageAsync(roomId, chatEntry);
 
-        // Broadcast the message back to all users listening on the channel
         messagingTemplate.convertAndSend("/topic/room/" + roomId + "/chat", event);
     }
 
-    /**
-     * Handles emoji reactions.
-     * Destination: /app/room/{roomId}/emoji
-     */
     @MessageMapping("/room/{roomId}/emoji")
     public void handleEmojiEvent(@DestinationVariable String roomId, ChatEvent event) {
         log.info("Received emoji reaction '{}' from user {} in room {}", 
                  event.getMessage(), event.getUsername(), roomId);
         
-        // Broadcast the emoji event to the room
         messagingTemplate.convertAndSend("/topic/room/" + roomId + "/emoji", event);
+    }
+
+    @MessageMapping("/room/{roomId}/rtc")
+    public void handleRtcSignal(@DestinationVariable String roomId, RtcSignalEvent signal) {
+        log.info("Relaying WebRTC signal {} from sender {} to target {} in room {}", 
+                 signal.getType(), signal.getSenderId(), signal.getTargetId(), roomId);
+        
+        // Broadcast signaling data to room or specific target peer channel
+        if (signal.getTargetId() != null) {
+            messagingTemplate.convertAndSend("/topic/room/" + roomId + "/rtc/" + signal.getTargetId(), signal);
+        } else {
+            messagingTemplate.convertAndSend("/topic/room/" + roomId + "/rtc", signal);
+        }
+    }
+
+    @MessageMapping("/invite")
+    public void handlePartyInvite(InviteEvent invite) {
+        log.info("Dispatching party invite to room {} from user {} to target user {}", 
+                 invite.getRoomId(), invite.getSenderUsername(), invite.getTargetUserId());
+        
+        InviteEvent savedInvite = roomInviteService.saveInvite(invite);
+        messagingTemplate.convertAndSend("/topic/user/" + invite.getTargetUserId() + "/invites", savedInvite);
     }
 }

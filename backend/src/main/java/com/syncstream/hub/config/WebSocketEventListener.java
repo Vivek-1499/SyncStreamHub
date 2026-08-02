@@ -40,14 +40,8 @@ public class WebSocketEventListener {
             ActiveRoomState activeState = roomStateService.decrementParticipantCount(roomId);
 
             if (activeState != null) {
-                // 2. If room has no active participants, delete it from Redis completely
-                if (activeState.getParticipantCount() == 0) {
-                    log.info("Room {} is empty. Deleting watch party room from Redis cache.", roomId);
-                    roomStateService.deleteRoom(roomId);
-                } else {
-                    // Broadcast the updated active state to remaining users
-                    messagingTemplate.convertAndSend("/topic/room/" + roomId, activeState);
-                }
+                // Broadcast updated state to room participants
+                messagingTemplate.convertAndSend("/topic/room/" + roomId, activeState);
 
                 // 3. Asynchronously log the disconnection in MongoDB
                 SessionLogEntry sessionLog = SessionLogEntry.builder()

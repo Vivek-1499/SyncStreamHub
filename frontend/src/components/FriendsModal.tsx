@@ -1,0 +1,325 @@
+import React, { useState, useEffect } from 'react';
+import type { UserDto, PendingRequest, InviteEvent } from '../types';
+
+interface FriendsModalProps {
+  token: string | null;
+  onClose: () => void;
+  onInviteFriend?: (targetUserId: number) => void;
+  onJoinRoom?: (roomId: string) => void;
+  onNotificationCountChange?: (count: number) => void;
+  currentRoomId?: string;
+}
+
+export const FriendsModal: React.FC<FriendsModalProps> = ({
+  token,
+  onClose,
+  onInviteFriend,
+  onJoinRoom,
+  onNotificationCountChange,
+  currentRoomId,
+}) => {
+  const [activeTab, setActiveTab] = useState<'friends' | 'pending' | 'invites' | 'search'>('friends');
+  const [friends, setFriends] = useState<UserDto[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<InviteEvent[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<UserDto[]>([]);
+  const [statusMessage, setStatusMessage] = useState('');
+
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+
+  const fetchFriends = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${apiUrl}/friends`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFriends(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch friends', e);
+    }
+  };
+
+  const fetchPendingRequests = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${apiUrl}/friends/requests/pending`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPendingRequests(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch pending requests', e);
+    }
+  };
+
+  const fetchPendingInvites = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${apiUrl}/rooms/invites/pending`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPendingInvites(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch pending party invites', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchFriends();
+    fetchPendingRequests();
+    fetchPendingInvites();
+  }, [token]);
+
+  useEffect(() => {
+    const totalCount = pendingRequests.length + pendingInvites.length;
+    if (onNotificationCountChange) {
+      onNotificationCountChange(totalCount);
+    }
+  }, [pendingRequests, pendingInvites, onNotificationCountChange]);
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim() || !token) return;
+    try {
+      const res = await fetch(`${apiUrl}/friends/search?query=${encodeURIComponent(searchQuery.trim())}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data);
+      }
+    } catch (e) {
+      console.error('Failed to search users', e);
+    }
+  };
+
+  const handleSendRequest = async (username: string) => {
+    if (!token) return;
+    setStatusMessage('');
+    try {
+      const res = await fetch(`${apiUrl}/friends/request?username=${username}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatusMessage(`🎉 Friend request sent to ${username}!`);
+      } else {
+        setStatusMessage(`⚠️ ${data.message || 'Failed to send request'}`);
+      }
+    } catch (e) {
+      setStatusMessage('⚠️ Server error sending request');
+    }
+  };
+
+  const handleRespondRequest = async (friendshipId: number, accept: boolean) => {
+    if (!token) return;
+    const endpoint = accept ? 'accept' : 'decline';
+    try {
+      const res = await fetch(`${apiUrl}/friends/${endpoint}/${friendshipId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        fetchFriends();
+        fetchPendingRequests();
+      }
+    } catch (e) {
+      console.error('Failed to respond to request', e);
+    }
+  };
+
+  const handleDismissInvite = async (inviteId?: string) => {
+    if (!token || !inviteId) return;
+    try {
+      await fetch(`${apiUrl}/rooms/invites/${inviteId}/dismiss`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setPendingInvites(prev => prev.filter(inv => inv.id !== inviteId));
+    } catch (e) {
+      console.error('Failed to dismiss invite', e);
+    }
+  };
+
+  const handleAcceptInvite = (invite: InviteEvent) => {
+    if (invite.id) {
+      handleDismissInvite(invite.id);
+    }
+    if (onJoinRoom) {
+      onJoinRoom(invite.roomId);
+      onClose();
+    }
+  };
+
+  const handleRemoveFriend = async (friendId: number, friendName: string) => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${apiUrl}/friends/${friendId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setFriends(prev => prev.filter(f => f.id !== friendId));
+        setStatusMessage(`🗑️ Removed ${friendName} from friends.`);
+      }
+    } catch (e) {
+      console.error('Failed to remove friend', e);
+    }
+  };
+
+  return (
+    <div className="friends-modal-overlay">
+      <div className="friends-modal glass-card fade-in">
+        <div className="modal-header">
+          <h2>👥 Friends & Invites</h2>
+          <button className="close-btn" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-tabs">
+          <button
+            className={`tab-btn ${activeTab === 'friends' ? 'active' : ''}`}
+            onClick={() => setActiveTab('friends')}
+          >
+            My Friends ({friends.length})
+          </button>
+
+          <button
+            className={`tab-btn ${activeTab === 'pending' ? 'active' : ''}`}
+            onClick={() => setActiveTab('pending')}
+          >
+            Requests {pendingRequests.length > 0 && <span className="tab-badge">{pendingRequests.length}</span>}
+          </button>
+
+          <button
+            className={`tab-btn ${activeTab === 'invites' ? 'active' : ''}`}
+            onClick={() => setActiveTab('invites')}
+          >
+            Party Invites {pendingInvites.length > 0 && <span className="tab-badge invite-badge">{pendingInvites.length}</span>}
+          </button>
+
+          <button
+            className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`}
+            onClick={() => setActiveTab('search')}
+          >
+            Find People
+          </button>
+        </div>
+
+        {statusMessage && <div className="modal-status-msg">{statusMessage}</div>}
+
+        <div className="modal-content">
+          {activeTab === 'friends' && (
+            <div className="friends-list">
+              {friends.length === 0 ? (
+                <p className="empty-text">No friends added yet. Use "Find People" to search!</p>
+              ) : (
+                friends.map((friend) => (
+                  <div key={friend.id} className="friend-item-card">
+                    <div className="friend-info">
+                      <span className="friend-name">👤 {friend.username}</span>
+                      <span className="friend-email">{friend.email}</span>
+                    </div>
+                    <div className="friend-card-actions" style={{ display: 'flex', gap: '0.5rem' }}>
+                      {currentRoomId && onInviteFriend && (
+                        <button
+                          className="btn-primary invite-btn"
+                          onClick={() => {
+                            onInviteFriend(friend.id);
+                            setStatusMessage(`📩 Invited ${friend.username} to room '${currentRoomId}'!`);
+                          }}
+                        >
+                          Invite to Party
+                        </button>
+                      )}
+                      <button
+                        className="btn-secondary remove-friend-btn"
+                        onClick={() => handleRemoveFriend(friend.id, friend.username)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeTab === 'pending' && (
+            <div className="pending-list">
+              {pendingRequests.length === 0 ? (
+                <p className="empty-text">No pending friend requests.</p>
+              ) : (
+                pendingRequests.map((req) => (
+                  <div key={req.id} className="friend-item-card">
+                    <span className="friend-name">📩 Request from <strong>{req.senderUsername}</strong></span>
+                    <div className="action-btns">
+                      <button className="btn-primary" onClick={() => handleRespondRequest(req.id, true)}>Accept</button>
+                      <button className="btn-secondary" onClick={() => handleRespondRequest(req.id, false)}>Decline</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeTab === 'invites' && (
+            <div className="pending-list">
+              {pendingInvites.length === 0 ? (
+                <p className="empty-text">No pending watch party invites.</p>
+              ) : (
+                pendingInvites.map((inv) => (
+                  <div key={inv.id || inv.roomId} className="friend-item-card invite-item-card">
+                    <div className="friend-info">
+                      <span className="friend-name">🍿 Party Room: <strong>{inv.roomId}</strong></span>
+                      <span className="friend-email">Invited by <strong>{inv.senderUsername}</strong></span>
+                    </div>
+                    <div className="action-btns">
+                      <button className="btn-primary" onClick={() => handleAcceptInvite(inv)}>Join Watch Party</button>
+                      <button className="btn-secondary" onClick={() => handleDismissInvite(inv.id)}>Dismiss</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeTab === 'search' && (
+            <div className="search-section">
+              <form onSubmit={handleSearch} className="search-form">
+                <input
+                  type="text"
+                  placeholder="Search username..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="lobby-input"
+                />
+                <button type="submit" className="btn-primary">Search</button>
+              </form>
+
+              <div className="search-results">
+                {searchResults.map((user) => (
+                  <div key={user.id} className="friend-item-card">
+                    <span>👤 {user.username} ({user.email})</span>
+                    <button className="btn-secondary" onClick={() => handleSendRequest(user.username)}>
+                      Add Friend
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

@@ -1,9 +1,12 @@
 package com.syncstream.hub.controller;
 
+import com.syncstream.hub.model.dto.AuthResponse;
 import com.syncstream.hub.model.dto.LoginRequest;
 import com.syncstream.hub.model.dto.RegisterRequest;
+import com.syncstream.hub.model.dto.UserDto;
 import com.syncstream.hub.model.jpa.User;
 import com.syncstream.hub.repository.jpa.UserRepository;
+import com.syncstream.hub.security.JwtTokenProvider;
 import com.syncstream.hub.util.PasswordUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,9 +24,10 @@ import java.util.Map;
 public class AuthController {
 
     private final UserRepository userRepository;
+    private final JwtTokenProvider tokenProvider;
 
     /**
-     * Registers a new user. Checks for existing emails/usernames in PostgreSQL.
+     * Registers a new user with BCrypt password hashing and returns JWT token.
      */
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@RequestBody RegisterRequest request) {
@@ -47,11 +51,25 @@ public class AuthController {
 
         User savedUser = userRepository.save(user);
         log.info("User registered successfully: {}", savedUser.getUsername());
-        return ResponseEntity.status(HttpStatus.CREATED).body(savedUser);
+
+        String token = tokenProvider.generateToken(savedUser.getId(), savedUser.getUsername());
+        UserDto userDto = UserDto.builder()
+                .id(savedUser.getId())
+                .username(savedUser.getUsername())
+                .email(savedUser.getEmail())
+                .createdAt(savedUser.getCreatedAt())
+                .build();
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(AuthResponse.builder()
+                        .token(token)
+                        .tokenType("Bearer")
+                        .user(userDto)
+                        .build());
     }
 
     /**
-     * Logins user. Checks against the hashed password stored in PostgreSQL.
+     * Logins user, verifies BCrypt/legacy hash, and returns JWT token.
      */
     @PostMapping("/login")
     public ResponseEntity<?> loginUser(@RequestBody LoginRequest request) {
@@ -59,10 +77,27 @@ public class AuthController {
 
         return userRepository.findByUsername(request.getUsername())
                 .map(user -> {
-                    String hashedInput = PasswordUtils.hashPassword(request.getPassword());
-                    if (user.getPasswordHash().equals(hashedInput)) {
+                    if (PasswordUtils.matches(request.getPassword(), user.getPasswordHash())) {
+                        // Re-hash with BCrypt if old legacy hash was used
+                        if (!user.getPasswordHash().startsWith("$2a$")) {
+                            user.setPasswordHash(PasswordUtils.hashPassword(request.getPassword()));
+                            userRepository.save(user);
+                        }
+
                         log.info("User logged in successfully: {}", user.getUsername());
-                        return ResponseEntity.ok(user);
+                        String token = tokenProvider.generateToken(user.getId(), user.getUsername());
+                        UserDto userDto = UserDto.builder()
+                                .id(user.getId())
+                                .username(user.getUsername())
+                                .email(user.getEmail())
+                                .createdAt(user.getCreatedAt())
+                                .build();
+
+                        return ResponseEntity.ok(AuthResponse.builder()
+                                .token(token)
+                                .tokenType("Bearer")
+                                .user(userDto)
+                                .build());
                     } else {
                         log.warn("Invalid password for user: {}", request.getUsername());
                         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)

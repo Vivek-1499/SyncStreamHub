@@ -51,6 +51,7 @@ backend/.project
 backend/.settings/
 backend/dependency-reduced-pom.xml
 backend/src/main/resources/application-local.yml
+backend/src/main/resources/application-prod.yml
 
 # Docker / Local services
 docker-compose.override.yml

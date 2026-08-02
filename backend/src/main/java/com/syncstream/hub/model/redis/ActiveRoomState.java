@@ -25,4 +25,10 @@ public class ActiveRoomState implements Serializable {
     // Host parameters for synchronized playback authority
     private Long hostUserId;
     private String hostUsername;
+
+    @Builder.Default
+    private boolean isPublic = true;
+
+    @Builder.Default
+    private Integer maxParticipants = 10; // 0 for unlimited
 }

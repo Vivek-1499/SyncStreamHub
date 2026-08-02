@@ -1,31 +1,40 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import type { ActiveRoomState, AuthResponse } from '../types';
+import { FriendsModal } from './FriendsModal';
 
 interface CreateJoinRoomProps {
   onJoin: (roomId: string, userId: number, username: string) => void;
 }
 
 export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
-  // Authentication states
   const [user, setUser] = useState<{ id: number; username: string; email: string } | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   const [authUsername, setAuthUsername] = useState('');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // Lobby room management states
   const [createRoomId, setCreateRoomId] = useState('');
+  const [isPublic, setIsPublic] = useState<boolean>(true);
+  const [maxParticipants, setMaxParticipants] = useState<number>(10);
+
   const [joinRoomId, setJoinRoomId] = useState('');
   const [roomError, setRoomError] = useState('');
   const [roomSuccess, setRoomSuccess] = useState('');
 
+  const [publicRooms, setPublicRooms] = useState<ActiveRoomState[]>([]);
+  const [showFriendsModal, setShowFriendsModal] = useState(false);
+  const [notificationCount, setNotificationCount] = useState<number>(0);
+
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
 
-  // Check if user is already logged in
   useEffect(() => {
     const savedUserId = localStorage.getItem('syncstream_userId');
     const savedUsername = localStorage.getItem('syncstream_username');
     const savedEmail = localStorage.getItem('syncstream_email');
+    const savedToken = localStorage.getItem('syncstream_token');
 
     if (savedUserId && savedUsername) {
       setUser({
@@ -33,14 +42,59 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
         username: savedUsername,
         email: savedEmail || '',
       });
+      setToken(savedToken);
     }
   }, []);
 
-  // Handle User Registration (PostgreSQL write)
+  const checkNotifications = useCallback(async () => {
+    if (!token) return;
+    try {
+      const [reqRes, invRes] = await Promise.all([
+        fetch(`${apiUrl}/friends/requests/pending`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${apiUrl}/rooms/invites/pending`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      let count = 0;
+      if (reqRes.ok) {
+        const reqs = await reqRes.json();
+        count += reqs.length;
+      }
+      if (invRes.ok) {
+        const invs = await invRes.json();
+        count += invs.length;
+      }
+      setNotificationCount(count);
+    } catch (e) {
+      console.error('Error checking pending notifications', e);
+    }
+  }, [token, apiUrl]);
+
+  const fetchPublicRooms = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/rooms/public`);
+      if (res.ok) {
+        const data = await res.json();
+        setPublicRooms(data);
+      }
+    } catch (err) {
+      console.error('Failed to load public watch party directory', err);
+    }
+  };
+
+  useEffect(() => {
+    if (user) {
+      fetchPublicRooms();
+      checkNotifications();
+      const interval = setInterval(() => {
+        fetchPublicRooms();
+        checkNotifications();
+      }, 15000);
+      return () => clearInterval(interval);
+    }
+  }, [user, checkNotifications]);
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-
     if (!authUsername.trim() || !authEmail.trim() || !authPassword.trim()) {
       setAuthError('Please fill out all registration fields.');
       return;
@@ -57,23 +111,19 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
         }),
       });
 
-      const data = await response.json();
+      const data: AuthResponse = await response.json();
       if (!response.ok) {
-        throw new Error(data.message || 'Failed to register account.');
+        throw new Error((data as any).message || 'Failed to register account.');
       }
-
-      // Automatically log them in after registration
       handleAuthSuccess(data);
     } catch (err: any) {
       setAuthError(err.message || 'Server communication error.');
     }
   };
 
-  // Handle User Login (PostgreSQL read & check)
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-
     if (!authUsername.trim() || !authPassword.trim()) {
       setAuthError('Please enter your username and password.');
       return;
@@ -89,22 +139,24 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
         }),
       });
 
-      const data = await response.json();
+      const data: AuthResponse = await response.json();
       if (!response.ok) {
-        throw new Error(data.message || 'Invalid credentials.');
+        throw new Error((data as any).message || 'Invalid credentials.');
       }
-
       handleAuthSuccess(data);
     } catch (err: any) {
       setAuthError(err.message || 'Server communication error.');
     }
   };
 
-  const handleAuthSuccess = (userData: { id: number; username: string; email: string }) => {
-    localStorage.setItem('syncstream_userId', userData.id.toString());
-    localStorage.setItem('syncstream_username', userData.username);
-    localStorage.setItem('syncstream_email', userData.email);
-    setUser(userData);
+  const handleAuthSuccess = (data: AuthResponse) => {
+    localStorage.setItem('syncstream_userId', data.user.id.toString());
+    localStorage.setItem('syncstream_username', data.user.username);
+    localStorage.setItem('syncstream_email', data.user.email);
+    localStorage.setItem('syncstream_token', data.token);
+
+    setUser({ id: data.user.id, username: data.user.username, email: data.user.email });
+    setToken(data.token);
     setAuthPassword('');
     setAuthError('');
   };
@@ -113,11 +165,12 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     localStorage.removeItem('syncstream_userId');
     localStorage.removeItem('syncstream_username');
     localStorage.removeItem('syncstream_email');
+    localStorage.removeItem('syncstream_token');
     localStorage.removeItem('syncstream_roomId');
     setUser(null);
+    setToken(null);
   };
 
-  // Handle Room Creation (Redis initialize)
   const handleCreateRoom = async (e: React.FormEvent) => {
     e.preventDefault();
     setRoomError('');
@@ -129,17 +182,15 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     }
 
     const cleanRoomId = createRoomId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    if (!cleanRoomId) {
-      setRoomError('Room ID can only contain alphanumeric characters, dashes, or underscores.');
-      return;
-    }
-
-    if (!user) return;
+    if (!cleanRoomId || !user) return;
 
     try {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const response = await fetch(
-        `${apiUrl}/rooms/create?roomId=${cleanRoomId}&userId=${user.id}&username=${user.username}`,
-        { method: 'POST' }
+        `${apiUrl}/rooms/create?roomId=${cleanRoomId}&userId=${user.id}&username=${user.username}&isPublic=${isPublic}&maxParticipants=${maxParticipants}`,
+        { method: 'POST', headers }
       );
       
       const data = await response.json();
@@ -156,7 +207,6 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     }
   };
 
-  // Handle Joining Room (Redis validation check)
   const handleJoinRoom = async (e: React.FormEvent) => {
     e.preventDefault();
     setRoomError('');
@@ -168,22 +218,16 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     }
 
     const cleanRoomId = joinRoomId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    if (!cleanRoomId) {
-      setRoomError('Invalid Room ID format.');
-      return;
-    }
-
-    if (!user) return;
+    if (!cleanRoomId || !user) return;
 
     try {
-      const response = await fetch(`${apiUrl}/rooms/${cleanRoomId}`);
+      const response = await fetch(`${apiUrl}/rooms/${cleanRoomId}?userId=${user.id}`);
       const data = await response.json();
       
       if (!response.ok) {
         throw new Error(data.message || 'This room does not exist.');
       }
 
-      // Room is active, let them join
       setRoomSuccess(`Joining room '${cleanRoomId}'...`);
       setTimeout(() => {
         onJoin(cleanRoomId, user.id, user.username);
@@ -195,13 +239,12 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
 
   return (
     <div className="lobby-container">
-      {/* 1. Auth Page: Login / Register Panel */}
       {!user ? (
         <div className="lobby-card glass-card fade-in">
           <div className="lobby-brand">
             <span className="lobby-logo animate-bounce">🍿</span>
             <h1>SyncStream <span className="highlight-text">Hub</span></h1>
-            <p className="lobby-subtitle">Hashed Account Registration & Login (PostgreSQL)</p>
+            <p className="lobby-subtitle">JWT Token Auth & BCrypt Security (PostgreSQL)</p>
           </div>
 
           <div className="auth-tabs">
@@ -271,52 +314,96 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
           </form>
         </div>
       ) : (
-        /* 2. Room Lobby Dashboard: Create / Join Watch Party Rooms */
         <div className="lobby-card glass-card fade-in dashboard-card">
           <div className="lobby-brand">
             <span className="lobby-logo">👑</span>
             <h1>Lobby <span className="highlight-text">Dashboard</span></h1>
             <p className="welcome-text">Logged in as: <strong className="user-handle">{user.username}</strong></p>
-            <button className="btn-secondary logout-btn" onClick={handleLogout}>
-              Logout / Switch Account
-            </button>
+            <div className="dashboard-header-actions">
+              <button className="btn-primary friends-btn relative-badge-btn" onClick={() => setShowFriendsModal(true)}>
+                👥 Friends & Invites
+                {notificationCount > 0 && <span className="notification-red-dot" title={`${notificationCount} pending notifications`}>{notificationCount}</span>}
+              </button>
+              <button className="btn-secondary logout-btn" onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
           </div>
 
           <div className="dashboard-grid">
-            {/* Create Watch Party Card */}
             <div className="dashboard-subcard">
               <h3>Create a Watch Party</h3>
-              <p>Initialize a room. You will be the **Host**, controlling URL & playback sync.</p>
+              <p>Initialize a room as **Host** to control stream & sync.</p>
               <form onSubmit={handleCreateRoom} className="lobby-form">
-                <input
-                  type="text"
-                  placeholder="e.g. movie-marathon"
-                  value={createRoomId}
-                  onChange={(e) => setCreateRoomId(e.target.value)}
-                  className="lobby-input"
-                  maxLength={30}
-                  required
-                />
+                <div className="form-group">
+                  <label htmlFor="create-room-id">Room Name / ID</label>
+                  <input
+                    type="text"
+                    id="create-room-id"
+                    placeholder="e.g. movie-marathon"
+                    value={createRoomId}
+                    onChange={(e) => setCreateRoomId(e.target.value)}
+                    className="lobby-input"
+                    maxLength={30}
+                    required
+                  />
+                </div>
+
+                <div className="form-options-row">
+                  <div className="form-group half-width">
+                    <label htmlFor="room-visibility">Visibility</label>
+                    <select
+                      id="room-visibility"
+                      value={isPublic ? 'public' : 'private'}
+                      onChange={(e) => setIsPublic(e.target.value === 'public')}
+                      className="lobby-input lobby-select"
+                    >
+                      <option value="public">🌐 Public Party</option>
+                      <option value="private">🔒 Private Party</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group half-width">
+                    <label htmlFor="max-participants">Max Viewers</label>
+                    <select
+                      id="max-participants"
+                      value={maxParticipants}
+                      onChange={(e) => setMaxParticipants(parseInt(e.target.value, 10))}
+                      className="lobby-input lobby-select"
+                    >
+                      <option value={2}>2 Viewers</option>
+                      <option value={5}>5 Viewers</option>
+                      <option value={10}>10 Viewers</option>
+                      <option value={20}>20 Viewers</option>
+                      <option value={50}>50 Viewers</option>
+                      <option value={0}>Unlimited</option>
+                    </select>
+                  </div>
+                </div>
+
                 <button type="submit" className="btn-primary">
                   Start Room (Host)
                 </button>
               </form>
             </div>
 
-            {/* Join Watch Party Card */}
             <div className="dashboard-subcard">
               <h3>Join a Watch Party</h3>
               <p>Enter an active Room ID. Sync and watch in unison.</p>
               <form onSubmit={handleJoinRoom} className="lobby-form">
-                <input
-                  type="text"
-                  placeholder="e.g. movie-marathon"
-                  value={joinRoomId}
-                  onChange={(e) => setJoinRoomId(e.target.value)}
-                  className="lobby-input"
-                  maxLength={30}
-                  required
-                />
+                <div className="form-group">
+                  <label htmlFor="join-room-id">Target Room ID</label>
+                  <input
+                    type="text"
+                    id="join-room-id"
+                    placeholder="e.g. movie-marathon"
+                    value={joinRoomId}
+                    onChange={(e) => setJoinRoomId(e.target.value)}
+                    className="lobby-input"
+                    maxLength={30}
+                    required
+                  />
+                </div>
                 <button type="submit" className="btn-secondary">
                   Join Active Room
                 </button>
@@ -324,9 +411,49 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
             </div>
           </div>
 
+          {/* Public Watch Party Directory Card Grid */}
+          <div className="public-directory-section">
+            <h3>🌐 Live Watch Parties Directory (Redis Active Rooms)</h3>
+            {publicRooms.length === 0 ? (
+              <p className="empty-text">No active public watch parties happening right now. Create one above!</p>
+            ) : (
+              <div className="public-rooms-grid">
+                {publicRooms.map((room) => (
+                  <div key={room.roomId} className="public-room-card glass-card">
+                    <div className="room-card-header">
+                      <span className="room-title">🎬 {room.roomId}</span>
+                      <span className="viewer-count-badge">
+                        👥 {room.participantCount}{room.maxParticipants ? `/${room.maxParticipants}` : ''} watching
+                      </span>
+                    </div>
+                    <p className="room-host">👑 Host: {room.hostUsername || 'Unknown'}</p>
+                    <button
+                      className="btn-primary join-public-btn"
+                      onClick={() => onJoin(room.roomId, user.id, user.username)}
+                    >
+                      Join Watch Party
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {roomError && <div className="lobby-error-message error-box">⚠️ {roomError}</div>}
           {roomSuccess && <div className="lobby-success-message">🎉 {roomSuccess}</div>}
         </div>
+      )}
+
+      {showFriendsModal && (
+        <FriendsModal
+          token={token}
+          onClose={() => {
+            setShowFriendsModal(false);
+            checkNotifications();
+          }}
+          onJoinRoom={(roomId) => onJoin(roomId, user.id, user.username)}
+          onNotificationCountChange={(count) => setNotificationCount(count)}
+        />
       )}
     </div>
   );

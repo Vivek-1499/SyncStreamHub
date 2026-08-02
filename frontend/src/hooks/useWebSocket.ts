@@ -1,44 +1,63 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Client, type IMessage } from '@stomp/stompjs';
-import type { ActiveRoomState, ChatEvent, SyncEvent } from '../types';
+import type { ActiveRoomState, ChatEvent, SyncEvent, InviteEvent, RtcSignalEvent } from '../types';
 
 interface UseWebSocketProps {
   roomId: string;
   userId: number;
   username: string;
+  token?: string | null;
   onRoomStateReceived: (state: ActiveRoomState) => void;
   onChatMessageReceived: (chat: ChatEvent) => void;
   onEmojiReceived: (emoji: ChatEvent) => void;
+  onInviteReceived?: (invite: InviteEvent) => void;
+  onFriendRequestReceived?: (data: any) => void;
+  onRtcSignalReceived?: (signal: RtcSignalEvent) => void;
 }
 
 export const useWebSocket = ({
   roomId,
   userId,
   username,
+  token,
   onRoomStateReceived,
   onChatMessageReceived,
   onEmojiReceived,
+  onInviteReceived,
+  onFriendRequestReceived,
+  onRtcSignalReceived,
 }: UseWebSocketProps) => {
   const [connected, setConnected] = useState(false);
   const clientRef = useRef<Client | null>(null);
 
-  // Cache callbacks in refs to avoid rebuilding connections
   const onRoomStateReceivedRef = useRef(onRoomStateReceived);
   const onChatMessageReceivedRef = useRef(onChatMessageReceived);
   const onEmojiReceivedRef = useRef(onEmojiReceived);
+  const onInviteReceivedRef = useRef(onInviteReceived);
+  const onFriendRequestReceivedRef = useRef(onFriendRequestReceived);
+  const onRtcSignalReceivedRef = useRef(onRtcSignalReceived);
 
   useEffect(() => {
     onRoomStateReceivedRef.current = onRoomStateReceived;
     onChatMessageReceivedRef.current = onChatMessageReceived;
     onEmojiReceivedRef.current = onEmojiReceived;
+    onInviteReceivedRef.current = onInviteReceived;
+    onFriendRequestReceivedRef.current = onFriendRequestReceived;
+    onRtcSignalReceivedRef.current = onRtcSignalReceived;
   });
 
   useEffect(() => {
     const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws';
     console.log(`Connecting to WebSocket server at: ${wsUrl}`);
 
+    const connectHeaders: Record<string, string> = {};
+    if (token) {
+      connectHeaders['Authorization'] = `Bearer ${token}`;
+    }
+
     const client = new Client({
       brokerURL: wsUrl,
+      connectHeaders,
       reconnectDelay: 5000,
       heartbeatIncoming: 4000,
       heartbeatOutgoing: 4000,
@@ -51,7 +70,7 @@ export const useWebSocket = ({
       console.log('STOMP Connection established successfully', frame);
       setConnected(true);
 
-      // 1. Subscribe to the playback sync channel
+      // 1. Playback sync channel
       client.subscribe(`/topic/room/${roomId}`, (message: IMessage) => {
         try {
           const state: ActiveRoomState = JSON.parse(message.body);
@@ -61,7 +80,7 @@ export const useWebSocket = ({
         }
       });
 
-      // 2. Subscribe to the chat feed channel
+      // 2. Chat feed channel
       client.subscribe(`/topic/room/${roomId}/chat`, (message: IMessage) => {
         try {
           const chat: ChatEvent = JSON.parse(message.body);
@@ -71,7 +90,7 @@ export const useWebSocket = ({
         }
       });
 
-      // 3. Subscribe to the emoji reactions channel
+      // 3. Emoji reactions channel
       client.subscribe(`/topic/room/${roomId}/emoji`, (message: IMessage) => {
         try {
           const emoji: ChatEvent = JSON.parse(message.body);
@@ -81,7 +100,56 @@ export const useWebSocket = ({
         }
       });
 
-      // 4. Send JOIN event to establish participant count
+      // 4. WebRTC general signaling channel
+      client.subscribe(`/topic/room/${roomId}/rtc`, (message: IMessage) => {
+        try {
+          const signal: RtcSignalEvent = JSON.parse(message.body);
+          if (onRtcSignalReceivedRef.current) {
+            onRtcSignalReceivedRef.current(signal);
+          }
+        } catch (e) {
+          console.error('Failed to parse WebRTC signal', e);
+        }
+      });
+
+      // 5. WebRTC direct peer signaling channel
+      client.subscribe(`/topic/room/${roomId}/rtc/${userId}`, (message: IMessage) => {
+        try {
+          const signal: RtcSignalEvent = JSON.parse(message.body);
+          if (onRtcSignalReceivedRef.current) {
+            onRtcSignalReceivedRef.current(signal);
+          }
+        } catch (e) {
+          console.error('Failed to parse direct WebRTC signal', e);
+        }
+      });
+
+      // 6. Direct user invite channel
+      if (userId) {
+        client.subscribe(`/topic/user/${userId}/invites`, (message: IMessage) => {
+          try {
+            const invite: InviteEvent = JSON.parse(message.body);
+            if (onInviteReceivedRef.current) {
+              onInviteReceivedRef.current(invite);
+            }
+          } catch (e) {
+            console.error('Failed to parse invite event', e);
+          }
+        });
+
+        client.subscribe(`/topic/user/${userId}/friend-requests`, (message: IMessage) => {
+          try {
+            const reqData = JSON.parse(message.body);
+            if (onFriendRequestReceivedRef.current) {
+              onFriendRequestReceivedRef.current(reqData);
+            }
+          } catch (e) {
+            console.error('Failed to parse friend request event', e);
+          }
+        });
+      }
+
+      // Send JOIN event
       const joinEvent: SyncEvent = {
         action: 'JOIN',
         playbackPosition: 0,
@@ -112,7 +180,6 @@ export const useWebSocket = ({
     return () => {
       if (clientRef.current) {
         if (clientRef.current.connected) {
-          // Send LEAVE event to decrement player counts and log
           const leaveEvent: SyncEvent = {
             action: 'LEAVE',
             playbackPosition: 0,
@@ -133,7 +200,7 @@ export const useWebSocket = ({
         console.log('Deactivated STOMP websocket connection');
       }
     };
-  }, [roomId, userId, username]);
+  }, [roomId, userId, username, token]);
 
   const sendSyncEvent = useCallback((action: SyncEvent['action'], position: number, videoUrl?: string) => {
     if (clientRef.current && clientRef.current.connected) {
@@ -149,8 +216,6 @@ export const useWebSocket = ({
         destination: `/app/room/${roomId}/sync`,
         body: JSON.stringify(syncEvent)
       });
-    } else {
-      console.warn('STOMP connection not active. SyncEvent postponed.');
     }
   }, [roomId, userId, username]);
 
@@ -166,8 +231,6 @@ export const useWebSocket = ({
         destination: `/app/room/${roomId}/chat`,
         body: JSON.stringify(chatEvent)
       });
-    } else {
-      console.warn('STOMP connection not active. Chat message not sent.');
     }
   }, [roomId, userId, username]);
 
@@ -183,10 +246,39 @@ export const useWebSocket = ({
         destination: `/app/room/${roomId}/emoji`,
         body: JSON.stringify(emojiEvent)
       });
-    } else {
-      console.warn('STOMP connection not active. Emoji reaction not sent.');
     }
   }, [roomId, userId, username]);
 
-  return { connected, sendSyncEvent, sendChatMessage, sendEmoji };
+  const sendRtcSignal = useCallback((type: RtcSignalEvent['type'], data: any, targetId?: number) => {
+    if (clientRef.current && clientRef.current.connected) {
+      const signal: RtcSignalEvent = {
+        senderId: userId,
+        targetId,
+        type,
+        data
+      };
+      clientRef.current.publish({
+        destination: `/app/room/${roomId}/rtc`,
+        body: JSON.stringify(signal)
+      });
+    }
+  }, [roomId, userId]);
+
+  const sendPartyInvite = useCallback((targetUserId: number) => {
+    if (clientRef.current && clientRef.current.connected) {
+      const invite: InviteEvent = {
+        roomId,
+        senderId: userId,
+        senderUsername: username,
+        targetUserId,
+        timestamp: Date.now()
+      };
+      clientRef.current.publish({
+        destination: `/app/invite`,
+        body: JSON.stringify(invite)
+      });
+    }
+  }, [roomId, userId, username]);
+
+  return { connected, sendSyncEvent, sendChatMessage, sendEmoji, sendRtcSignal, sendPartyInvite };
 };

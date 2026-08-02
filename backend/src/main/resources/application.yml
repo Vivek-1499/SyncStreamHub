@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
 
 spring:
   profiles:
@@ -14,7 +14,7 @@ spring:
       max-file-size: 2GB
       max-request-size: 2GB
 
-  # 1. PostgreSQL (JPA) Configuration
+  # Default Base Configuration (Overridden by application-local.yml or application-prod.yml)
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/SyncStream}
     username: ${SPRING_DATASOURCE_USERNAME:root}
@@ -30,23 +30,21 @@ spring:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
 
-  # 2. MongoDB Document DB Configuration
-  # Note: To use your MongoDB Atlas Cluster directly, set this environment variable:
-  # SPRING_DATA_MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/syncstream?retryWrites=true&w=majority
   data:
     mongodb:
       uri: ${SPRING_DATA_MONGODB_URI:mongodb://root:mongo_password@localhost:27017/syncstream?authSource=admin}
 
-    # 3. Redis Cache Configuration
     redis:
       host: ${SPRING_REDIS_HOST:localhost}
       port: ${SPRING_REDIS_PORT:6379}
       password: ${SPRING_REDIS_PASSWORD:}
+      ssl:
+        enabled: ${SPRING_REDIS_SSL_ENABLED:false}
       timeout: 2000ms
       lettuce:
         pool:
@@ -58,6 +56,6 @@ spring:
 # Logging config
 logging:
   level:
-    org.hibernate.SQL: DEBUG
-    org.springframework.data.mongodb.core.MongoTemplate: DEBUG
+    org.hibernate.SQL: WARN
+    org.springframework.data.mongodb.core.MongoTemplate: WARN
     com.syncstream.hub: INFO
