@@ -58,4 +58,14 @@ logging:
   level:
     org.hibernate.SQL: WARN
     org.springframework.data.mongodb.core.MongoTemplate: WARN
+
+cloudflare:
+  r2:
+    enabled: ${R2_ENABLED:true}
+    account-id: ${R2_ACCOUNT_ID:dbaff6644ba49ac07f724bd4d5d7c0dd}
+    access-key-id: ${R2_ACCESS_KEY_ID:510733b8109ae5a63585d9ecc0355fd5}
+    secret-access-key: ${R2_SECRET_ACCESS_KEY:d7da6a382541f8ad64b1d84aaf4fa2fdf911bef0cbae45d6a15f5aec936e91b4}
+    bucket-name: ${R2_BUCKET_NAME:syncstream-videos}
+    public-url: ${R2_PUBLIC_URL:https://pub-xxxx.r2.dev}
+
     com.syncstream.hub: INFO

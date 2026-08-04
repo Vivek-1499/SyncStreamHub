@@ -103,6 +103,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- AWS SDK v2 for Cloudflare R2 / S3 Object Storage -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>2.25.1</version>
+        </dependency>
+
         <!-- Testcontainers for Integration Testing -->
         <dependency>
             <groupId>org.testcontainers</groupId>
