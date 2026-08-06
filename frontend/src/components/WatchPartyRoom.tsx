@@ -3,6 +3,7 @@ import ReactPlayer from 'react-player';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { FriendsModal } from './FriendsModal';
 import type { ActiveRoomState, ChatEvent, WatchPartyHistory, InviteEvent } from '../types';
+import { authFetch, isTokenExpired } from '../utils/authUtils';
 
 interface WatchPartyRoomProps {
   roomId: string;
@@ -87,11 +88,12 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   };
 
   const checkNotifications = useCallback(async () => {
-    if (!token) return;
+    const currentToken = localStorage.getItem('syncstream_token');
+    if (!currentToken || isTokenExpired(currentToken)) return;
     try {
       const [reqRes, invRes] = await Promise.all([
-        fetch(`${apiUrl}/friends/requests/pending`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${apiUrl}/rooms/invites/pending`, { headers: { Authorization: `Bearer ${token}` } }),
+        authFetch(`${apiUrl}/friends/requests/pending`),
+        authFetch(`${apiUrl}/rooms/invites/pending`),
       ]);
       let count = 0;
       if (reqRes.ok) {
@@ -106,13 +108,14 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
     } catch (e) {
       console.error('Error checking notifications', e);
     }
-  }, [token, apiUrl]);
+  }, [apiUrl]);
 
   useEffect(() => {
     checkNotifications();
     const interval = setInterval(checkNotifications, 15000);
     return () => clearInterval(interval);
   }, [checkNotifications]);
+
 
   useEffect(() => {
     const roomApiUrl = `${apiUrl}/rooms`;
@@ -324,14 +327,11 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
 
   const handleSaveRoomSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isHost || !token) return;
+    if (!isHost) return;
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${apiUrl}/rooms/${roomId}/settings?isPublic=${editIsPublic}&maxParticipants=${editMaxParticipants}`,
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        }
+        { method: 'POST' }
       );
       if (res.ok) {
         const updated: ActiveRoomState = await res.json();
@@ -344,12 +344,10 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   };
 
   const handleSendChatFriendRequest = async (targetUsername: string) => {
-    if (!token) return;
     setChatUserStatus('');
     try {
-      const res = await fetch(`${apiUrl}/friends/request?username=${encodeURIComponent(targetUsername)}`, {
+      const res = await authFetch(`${apiUrl}/friends/request?username=${encodeURIComponent(targetUsername)}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (res.ok) {
@@ -361,6 +359,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
       setChatUserStatus('⚠️ Server error sending friend request');
     }
   };
+
 
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
@@ -679,11 +678,9 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                 <button
                   className="btn-primary"
                   onClick={async () => {
-                    if (!token) return;
                     try {
-                      await fetch(`${apiUrl}/friends/accept/${inRoomFriendRequest.id}`, {
+                      await authFetch(`${apiUrl}/friends/accept/${inRoomFriendRequest.id}`, {
                         method: 'POST',
-                        headers: { Authorization: `Bearer ${token}` },
                       });
                       setInRoomFriendRequest(null);
                     } catch (e) {
@@ -696,11 +693,9 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                 <button
                   className="btn-secondary"
                   onClick={async () => {
-                    if (!token) return;
                     try {
-                      await fetch(`${apiUrl}/friends/decline/${inRoomFriendRequest.id}`, {
+                      await authFetch(`${apiUrl}/friends/decline/${inRoomFriendRequest.id}`, {
                         method: 'POST',
-                        headers: { Authorization: `Bearer ${token}` },
                       });
                       setInRoomFriendRequest(null);
                     } catch (e) {
@@ -710,6 +705,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                 >
                   Decline
                 </button>
+
               </div>
             </div>
           </div>

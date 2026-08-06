@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { UserDto, PendingRequest, InviteEvent } from '../types';
+import { authFetch } from '../utils/authUtils';
 
 interface FriendsModalProps {
   token: string | null;
@@ -29,11 +30,8 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
 
   const fetchFriends = async () => {
-    if (!token) return;
     try {
-      const res = await fetch(`${apiUrl}/friends`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(`${apiUrl}/friends`);
       if (res.ok) {
         const data = await res.json();
         setFriends(data);
@@ -44,11 +42,8 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   };
 
   const fetchPendingRequests = async () => {
-    if (!token) return;
     try {
-      const res = await fetch(`${apiUrl}/friends/requests/pending`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(`${apiUrl}/friends/requests/pending`);
       if (res.ok) {
         const data = await res.json();
         setPendingRequests(data);
@@ -59,11 +54,8 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   };
 
   const fetchPendingInvites = async () => {
-    if (!token) return;
     try {
-      const res = await fetch(`${apiUrl}/rooms/invites/pending`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(`${apiUrl}/rooms/invites/pending`);
       if (res.ok) {
         const data = await res.json();
         setPendingInvites(data);
@@ -72,6 +64,7 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
       console.error('Failed to fetch pending party invites', e);
     }
   };
+
 
   useEffect(() => {
     fetchFriends();
@@ -88,11 +81,9 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchQuery.trim() || !token) return;
+    if (!searchQuery.trim()) return;
     try {
-      const res = await fetch(`${apiUrl}/friends/search?query=${encodeURIComponent(searchQuery.trim())}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(`${apiUrl}/friends/search?query=${encodeURIComponent(searchQuery.trim())}`);
       if (res.ok) {
         const data = await res.json();
         setSearchResults(data);
@@ -103,12 +94,10 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   };
 
   const handleSendRequest = async (username: string) => {
-    if (!token) return;
     setStatusMessage('');
     try {
-      const res = await fetch(`${apiUrl}/friends/request?username=${username}`, {
+      const res = await authFetch(`${apiUrl}/friends/request?username=${username}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (res.ok) {
@@ -122,12 +111,10 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   };
 
   const handleRespondRequest = async (friendshipId: number, accept: boolean) => {
-    if (!token) return;
     const endpoint = accept ? 'accept' : 'decline';
     try {
-      const res = await fetch(`${apiUrl}/friends/${endpoint}/${friendshipId}`, {
+      const res = await authFetch(`${apiUrl}/friends/${endpoint}/${friendshipId}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         fetchFriends();
@@ -139,11 +126,10 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   };
 
   const handleDismissInvite = async (inviteId?: string) => {
-    if (!token || !inviteId) return;
+    if (!inviteId) return;
     try {
-      await fetch(`${apiUrl}/rooms/invites/${inviteId}/dismiss`, {
+      await authFetch(`${apiUrl}/rooms/invites/${inviteId}/dismiss`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       });
       setPendingInvites(prev => prev.filter(inv => inv.id !== inviteId));
     } catch (e) {
@@ -162,11 +148,9 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   };
 
   const handleRemoveFriend = async (friendId: number, friendName: string) => {
-    if (!token) return;
     try {
-      const res = await fetch(`${apiUrl}/friends/${friendId}`, {
+      const res = await authFetch(`${apiUrl}/friends/${friendId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         setFriends(prev => prev.filter(f => f.id !== friendId));
@@ -176,6 +160,7 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
       console.error('Failed to remove friend', e);
     }
   };
+
 
   return (
     <div className="friends-modal-overlay">

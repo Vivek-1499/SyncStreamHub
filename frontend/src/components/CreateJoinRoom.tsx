@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ActiveRoomState, AuthResponse } from '../types';
 import { FriendsModal } from './FriendsModal';
+import { isTokenExpired, clearUserSession, authFetch } from '../utils/authUtils';
 
 interface CreateJoinRoomProps {
   onJoin: (roomId: string, userId: number, username: string) => void;
@@ -36,6 +37,16 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     const savedEmail = localStorage.getItem('syncstream_email');
     const savedToken = localStorage.getItem('syncstream_token');
 
+    if (!savedToken || isTokenExpired(savedToken)) {
+      if (savedToken) {
+        console.warn('[CreateJoinRoom] Saved token has expired. Clearing saved credentials.');
+      }
+      clearUserSession();
+      setUser(null);
+      setToken(null);
+      return;
+    }
+
     if (savedUserId && savedUsername) {
       setUser({
         id: parseInt(savedUserId, 10),
@@ -47,11 +58,12 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
   }, []);
 
   const checkNotifications = useCallback(async () => {
-    if (!token) return;
+    const currentToken = localStorage.getItem('syncstream_token');
+    if (!currentToken || isTokenExpired(currentToken)) return;
     try {
       const [reqRes, invRes] = await Promise.all([
-        fetch(`${apiUrl}/friends/requests/pending`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${apiUrl}/rooms/invites/pending`, { headers: { Authorization: `Bearer ${token}` } }),
+        authFetch(`${apiUrl}/friends/requests/pending`),
+        authFetch(`${apiUrl}/rooms/invites/pending`),
       ]);
       let count = 0;
       if (reqRes.ok) {
@@ -66,7 +78,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     } catch (e) {
       console.error('Error checking pending notifications', e);
     }
-  }, [token, apiUrl]);
+  }, [apiUrl]);
 
   const fetchPublicRooms = async () => {
     try {
@@ -162,14 +174,18 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('syncstream_userId');
-    localStorage.removeItem('syncstream_username');
-    localStorage.removeItem('syncstream_email');
-    localStorage.removeItem('syncstream_token');
-    localStorage.removeItem('syncstream_roomId');
+    const currentToken = localStorage.getItem('syncstream_token');
+    if (currentToken) {
+      fetch(`${apiUrl}/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${currentToken}` },
+      }).catch((err) => console.error('Logout request error:', err));
+    }
+    clearUserSession();
     setUser(null);
     setToken(null);
   };
+
 
   const handleCreateRoom = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -185,13 +201,11 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     if (!cleanRoomId || !user) return;
 
     try {
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const response = await fetch(
+      const response = await authFetch(
         `${apiUrl}/rooms/create?roomId=${cleanRoomId}&userId=${user.id}&username=${user.username}&isPublic=${isPublic}&maxParticipants=${maxParticipants}`,
-        { method: 'POST', headers }
+        { method: 'POST' }
       );
+
       
       const data = await response.json();
       if (!response.ok) {
@@ -451,7 +465,10 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
             setShowFriendsModal(false);
             checkNotifications();
           }}
-          onJoinRoom={(roomId) => onJoin(roomId, user.id, user.username)}
+          onJoinRoom={(roomId) => {
+            if (user) onJoin(roomId, user.id, user.username);
+          }}
+
           onNotificationCountChange={(count) => setNotificationCount(count)}
         />
       )}
