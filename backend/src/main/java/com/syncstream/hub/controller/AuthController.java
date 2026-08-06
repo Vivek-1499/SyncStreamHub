@@ -110,4 +110,46 @@ public class AuthController {
                             .body(Map.of("message", "Invalid username or password."));
                 });
     }
+
+    /**
+     * Validates an existing token.
+     */
+    @GetMapping("/validate")
+    public ResponseEntity<?> validateToken(@RequestHeader("Authorization") String bearerToken) {
+        if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
+            String token = bearerToken.substring(7);
+            if (tokenProvider.validateToken(token)) {
+                Long userId = tokenProvider.getUserIdFromTokenSafely(token);
+                if (userId != null) {
+                    return userRepository.findById(userId)
+                            .map(user -> {
+                                UserDto userDto = UserDto.builder()
+                                        .id(user.getId())
+                                        .username(user.getUsername())
+                                        .email(user.getEmail())
+                                        .createdAt(user.getCreatedAt())
+                                        .build();
+                                return ResponseEntity.ok(Map.of("valid", true, "user", userDto));
+                            })
+                            .orElseGet(() -> ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                                    .body(Map.of("valid", false, "message", "User not found.")));
+                }
+            }
+        }
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("valid", false, "message", "Token expired or invalid."));
+    }
+
+    /**
+     * Logs out user and invalidates token in Upstash Redis.
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<?> logoutUser(@RequestHeader(value = "Authorization", required = false) String bearerToken) {
+        if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
+            String token = bearerToken.substring(7);
+            tokenProvider.invalidateToken(token);
+        }
+        return ResponseEntity.ok(Map.of("message", "Logged out successfully."));
+    }
 }
+

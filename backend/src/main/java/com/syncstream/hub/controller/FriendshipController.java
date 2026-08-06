@@ -7,8 +7,10 @@ import com.syncstream.hub.service.FriendshipService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -20,16 +22,24 @@ import java.util.Map;
 @Slf4j
 public class FriendshipController {
 
+
     private final FriendshipService friendshipService;
     private final JwtTokenProvider tokenProvider;
     private final SimpMessagingTemplate messagingTemplate;
 
     private Long extractUserId(String bearerToken) {
         if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
-            return tokenProvider.getUserIdFromToken(bearerToken.substring(7));
+            String token = bearerToken.substring(7);
+            if (tokenProvider.validateToken(token)) {
+                Long userId = tokenProvider.getUserIdFromTokenSafely(token);
+                if (userId != null) {
+                    return userId;
+                }
+            }
         }
-        throw new SecurityException("Missing or invalid Authorization token");
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing, expired, or invalid Authorization token");
     }
+
 
     @GetMapping("/search")
     public ResponseEntity<List<UserDto>> searchUsers(@RequestParam String query,

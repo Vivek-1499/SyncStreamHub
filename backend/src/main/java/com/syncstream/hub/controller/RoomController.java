@@ -35,10 +35,14 @@ public class RoomController {
 
     private Long extractUserId(String bearerToken) {
         if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
-            return tokenProvider.getUserIdFromToken(bearerToken.substring(7));
+            String token = bearerToken.substring(7);
+            if (tokenProvider.validateToken(token)) {
+                return tokenProvider.getUserIdFromTokenSafely(token);
+            }
         }
         return null;
     }
+
 
     @GetMapping("/public")
     public ResponseEntity<List<ActiveRoomState>> getPublicRooms() {

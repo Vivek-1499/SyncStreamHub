@@ -41,7 +41,11 @@ public class AuthControllerTest {
     @MockBean
     private JwtTokenProvider tokenProvider;
 
+    @MockBean
+    private com.syncstream.hub.service.TokenRedisService tokenRedisService;
+
     private User sampleUser;
+
 
     @BeforeEach
     void setUp() {
