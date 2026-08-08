@@ -116,6 +116,10 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
     return () => clearInterval(interval);
   }, [checkNotifications]);
 
+  const handleNotificationCountChange = useCallback((count: number) => {
+    setNotificationCount(count);
+  }, []);
+
 
   useEffect(() => {
     const roomApiUrl = `${apiUrl}/rooms`;
@@ -773,7 +777,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
             localStorage.setItem('syncstream_roomId', targetRoomId);
             window.location.reload();
           }}
-          onNotificationCountChange={(count) => setNotificationCount(count)}
+          onNotificationCountChange={handleNotificationCountChange}
         />
       )}
     </div>

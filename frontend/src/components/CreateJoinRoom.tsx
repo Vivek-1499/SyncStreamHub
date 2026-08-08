@@ -80,7 +80,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     }
   }, [apiUrl]);
 
-  const fetchPublicRooms = async () => {
+  const fetchPublicRooms = useCallback(async () => {
     try {
       const res = await fetch(`${apiUrl}/rooms/public`);
       if (res.ok) {
@@ -90,10 +90,12 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     } catch (err) {
       console.error('Failed to load public watch party directory', err);
     }
-  };
+  }, [apiUrl]);
+
+  const userId = user?.id;
 
   useEffect(() => {
-    if (user) {
+    if (userId) {
       fetchPublicRooms();
       checkNotifications();
       const interval = setInterval(() => {
@@ -102,7 +104,11 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
       }, 15000);
       return () => clearInterval(interval);
     }
-  }, [user, checkNotifications]);
+  }, [userId, fetchPublicRooms, checkNotifications]);
+
+  const handleNotificationCountChange = useCallback((count: number) => {
+    setNotificationCount(count);
+  }, []);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -469,7 +475,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
             if (user) onJoin(roomId, user.id, user.username);
           }}
 
-          onNotificationCountChange={(count) => setNotificationCount(count)}
+          onNotificationCountChange={handleNotificationCountChange}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { UserDto, PendingRequest, InviteEvent } from '../types';
 import { authFetch } from '../utils/authUtils';
 
@@ -66,6 +66,12 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   };
 
 
+  const onNotificationCountChangeRef = useRef(onNotificationCountChange);
+
+  useEffect(() => {
+    onNotificationCountChangeRef.current = onNotificationCountChange;
+  });
+
   useEffect(() => {
     fetchFriends();
     fetchPendingRequests();
@@ -74,10 +80,10 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
 
   useEffect(() => {
     const totalCount = pendingRequests.length + pendingInvites.length;
-    if (onNotificationCountChange) {
-      onNotificationCountChange(totalCount);
+    if (onNotificationCountChangeRef.current) {
+      onNotificationCountChangeRef.current(totalCount);
     }
-  }, [pendingRequests, pendingInvites, onNotificationCountChange]);
+  }, [pendingRequests.length, pendingInvites.length]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
