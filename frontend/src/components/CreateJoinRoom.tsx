@@ -428,13 +428,12 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
 
           {/* Public Watch Party Directory Card Grid */}
           <div className="public-directory-section">
-            <div className="directory-header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <div className="directory-header-row">
               <h3>🌐 Live Watch Parties Directory (Redis Active Rooms)</h3>
               <button
                 type="button"
-                className="btn-secondary"
+                className="btn-secondary refresh-directory-btn"
                 onClick={fetchPublicRooms}
-                style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', cursor: 'pointer' }}
               >
                 🔄 Refresh Directory
               </button>
