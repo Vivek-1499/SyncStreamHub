@@ -112,8 +112,6 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
 
   useEffect(() => {
     checkNotifications();
-    const interval = setInterval(checkNotifications, 15000);
-    return () => clearInterval(interval);
   }, [checkNotifications]);
 
   const handleNotificationCountChange = useCallback((count: number) => {
