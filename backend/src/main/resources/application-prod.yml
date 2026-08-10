@@ -1,0 +1,64 @@
+# Production Environment Configuration (Cloud Managed Services)
+# Active when SPRING_PROFILES_ACTIVE=prod
+
+spring:
+  # Multipart Upload Limits
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 2GB
+      max-request-size: 2GB
+
+  # 1. PostgreSQL (Supabase Cloud Database)
+  datasource:
+    url: ${SPRING_PROD_DATASOURCE_URL:jdbc:postgresql://db.oulrflxzcfvstdnnxnfz.supabase.co:5432/postgres?sslmode=require}
+    username: ${SPRING_PROD_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_PROD_DATASOURCE_PASSWORD:Vivek%407986}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      idle-timeout: 30000
+      connection-timeout: 20000
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+  # 2. MongoDB Document DB & Redis Cache
+  data:
+    mongodb:
+      uri: ${SPRING_PROD_MONGODB_URI:mongodb+srv://Vivek_1499:Vivek%407986@syncstreamcluster.8tkyiz1.mongodb.net/syncstream?appName=SyncStreamCluster}
+
+    redis:
+      host: ${SPRING_PROD_REDIS_HOST:relaxed-bluegill-93777.upstash.io}
+      port: ${SPRING_PROD_REDIS_PORT:6379}
+      password: ${SPRING_PROD_REDIS_PASSWORD:gQAAAAAAAW5RAAIgcDI5MmUyMGUyMzQwOGQ0MDg0OTY4YjRhM2VhOGZjOTk0NA}
+      ssl:
+        enabled: ${SPRING_PROD_REDIS_SSL_ENABLED:true}
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: -1ms
+
+logging:
+  level:
+    org.hibernate.SQL: WARN
+    org.springframework.data.mongodb.core.MongoTemplate: INFO
+    com.syncstream.hub: INFO
+
+# Cloudflare R2 Enabled for Production Cloud Video Uploads
+cloudflare:
+  r2:
+    enabled: true
+    account-id: ${R2_ACCOUNT_ID:dbaff6644ba49ac07f724bd4d5d7c0dd}
+    access-key-id: ${R2_ACCESS_KEY_ID:510733b8109ae5a63585d9ecc0355fd5}
+    secret-access-key: ${R2_SECRET_ACCESS_KEY:d7da6a382541f8ad64b1d84aaf4fa2fdf911bef0cbae45d6a15f5aec936e91b4}
+    bucket-name: ${R2_BUCKET_NAME:syncstream-videos}
+    public-url: ${R2_PUBLIC_URL:https://pub-xxxx.r2.dev}
+
