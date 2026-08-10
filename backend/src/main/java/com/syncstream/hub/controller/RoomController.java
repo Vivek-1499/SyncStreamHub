@@ -59,11 +59,18 @@ public class RoomController {
                     .body(Map.of("message", "There is no watch party happening in room '" + roomId + "'. Please check the ID or create a room."));
         }
         ActiveRoomState state = roomStateService.getRoomState(roomId);
-        if (state != null && state.getMaxParticipants() != null && state.getMaxParticipants() > 0) {
+        if (state != null) {
             boolean isHost = userId != null && userId.equals(state.getHostUserId());
-            if (!isHost && state.getParticipantCount() >= state.getMaxParticipants()) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(Map.of("message", "Watch party room '" + roomId + "' is at full capacity (" + state.getParticipantCount() + "/" + state.getMaxParticipants() + " viewers)."));
+            if (state.getParticipantCount() <= 0 && !isHost && (System.currentTimeMillis() - state.getLastUpdated() > 30000)) {
+                roomStateService.deleteRoom(roomId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("message", "There is no watch party happening in room '" + roomId + "'. Please check the ID or create a room."));
+            }
+            if (state.getMaxParticipants() != null && state.getMaxParticipants() > 0) {
+                if (!isHost && state.getParticipantCount() >= state.getMaxParticipants()) {
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                            .body(Map.of("message", "Watch party room '" + roomId + "' is at full capacity (" + state.getParticipantCount() + "/" + state.getMaxParticipants() + " viewers)."));
+                }
             }
         }
         return ResponseEntity.ok(state);

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Client, type IMessage } from '@stomp/stompjs';
+import SockJS from 'sockjs-client';
 import type { ActiveRoomState, ChatEvent, SyncEvent, InviteEvent, RtcSignalEvent } from '../types';
 
 interface UseWebSocketProps {
@@ -14,6 +15,57 @@ interface UseWebSocketProps {
   onFriendRequestReceived?: (data: any) => void;
   onRtcSignalReceived?: (signal: RtcSignalEvent) => void;
 }
+
+/**
+ * Resolves raw WebSocket and SockJS URLs dynamically from environment or location.
+ * Auto-upgrades to wss:// / https:// if page is loaded via HTTPS.
+ */
+const resolveWebSocketUrls = () => {
+  const envWsUrl = import.meta.env.VITE_WS_URL || import.meta.env.VITE_WS_BASE_URL;
+  const envApiUrl = import.meta.env.VITE_API_URL;
+
+  let isSecure = window.location.protocol === 'https:';
+  let host = window.location.host;
+  let wsPath = '/ws';
+
+  if (envWsUrl) {
+    try {
+      const parsed = new URL(envWsUrl);
+      isSecure = parsed.protocol === 'wss:' || parsed.protocol === 'https:' || isSecure;
+      host = parsed.host;
+      wsPath = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '/ws';
+    } catch {
+      if (envWsUrl.startsWith('wss://') || envWsUrl.startsWith('https://')) {
+        isSecure = true;
+      }
+    }
+  } else if (envApiUrl) {
+    try {
+      const parsed = new URL(envApiUrl);
+      isSecure = parsed.protocol === 'https:' || isSecure;
+      host = parsed.host;
+    } catch {
+      // fallback
+    }
+  } else if (import.meta.env.DEV) {
+    host = 'localhost:8080';
+  }
+
+  const wsScheme = isSecure ? 'wss://' : 'ws://';
+  const httpScheme = isSecure ? 'https://' : 'http://';
+
+  // Ensure clean paths without trailing slashes
+  const cleanPath = wsPath.endsWith('/') ? wsPath.slice(0, -1) : wsPath;
+  const baseWsPath = cleanPath.endsWith('/websocket') ? cleanPath.slice(0, -10) : cleanPath;
+
+  // Native WebSocket URL
+  const rawWsUrl = `${wsScheme}${host}${baseWsPath}`;
+  // SockJS endpoint URLs
+  const sockJsUrl = `${httpScheme}${host}${baseWsPath}-sockjs`;
+  const fallbackSockJsUrl = `${httpScheme}${host}${baseWsPath}`;
+
+  return { rawWsUrl, sockJsUrl, fallbackSockJsUrl };
+};
 
 export const useWebSocket = ({
   roomId,
@@ -47,18 +99,29 @@ export const useWebSocket = ({
   });
 
   useEffect(() => {
-    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws';
-    console.log(`Connecting to WebSocket server at: ${wsUrl}`);
+    const { rawWsUrl, sockJsUrl, fallbackSockJsUrl } = resolveWebSocketUrls();
+    console.log(`[WebSocket] Initializing connection logic. Native URL: ${rawWsUrl}, SockJS Primary: ${sockJsUrl}, Fallback: ${fallbackSockJsUrl}`);
 
     const connectHeaders: Record<string, string> = {};
     if (token) {
       connectHeaders['Authorization'] = `Bearer ${token}`;
     }
 
+    // Try SockJS with primary (/ws-sockjs) and fallback (/ws)
+    const createSockJS = () => {
+      try {
+        return new SockJS(sockJsUrl);
+      } catch (e) {
+        console.warn(`[SockJS] Primary endpoint ${sockJsUrl} failed, falling back to ${fallbackSockJsUrl}`, e);
+        return new SockJS(fallbackSockJsUrl);
+      }
+    };
+
     const client = new Client({
-      brokerURL: wsUrl,
+      brokerURL: rawWsUrl,
+      webSocketFactory: () => createSockJS(),
       connectHeaders,
-      reconnectDelay: 5000,
+      reconnectDelay: 3000,
       heartbeatIncoming: 4000,
       heartbeatOutgoing: 4000,
       debug: (str) => {
@@ -162,6 +225,11 @@ export const useWebSocket = ({
         destination: `/app/room/${roomId}/sync`,
         body: JSON.stringify(joinEvent)
       });
+    };
+
+    client.onWebSocketClose = () => {
+      console.log('STOMP WebSocket Connection closed');
+      setConnected(false);
     };
 
     client.onDisconnect = () => {

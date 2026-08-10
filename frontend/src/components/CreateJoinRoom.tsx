@@ -29,7 +29,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
   const [showFriendsModal, setShowFriendsModal] = useState(false);
   const [notificationCount, setNotificationCount] = useState<number>(0);
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+  const apiUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api';
 
   useEffect(() => {
     const savedUserId = localStorage.getItem('syncstream_userId');

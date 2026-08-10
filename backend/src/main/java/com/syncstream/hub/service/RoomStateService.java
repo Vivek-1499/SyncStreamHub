@@ -109,9 +109,16 @@ public class RoomStateService {
         ActiveRoomState state = getRoomState(roomId);
         if (state != null) {
             int currentCount = state.getParticipantCount();
-            state.setParticipantCount(Math.max(0, currentCount - 1));
-            saveRoomState(state);
-            log.info("Participant left room {}. Count: {}", roomId, state.getParticipantCount());
+            int newCount = Math.max(0, currentCount - 1);
+            if (newCount <= 0) {
+                deleteRoom(roomId);
+                log.info("Participant left room {}. Room is now empty and purged from Redis.", roomId);
+                return null;
+            } else {
+                state.setParticipantCount(newCount);
+                saveRoomState(state);
+                log.info("Participant left room {}. Count: {}", roomId, state.getParticipantCount());
+            }
         }
         return state;
     }
@@ -123,12 +130,12 @@ public class RoomStateService {
             for (Object idObj : roomIds) {
                 String roomId = idObj.toString();
                 ActiveRoomState state = getRoomState(roomId);
-                if (state != null) {
+                if (state != null && state.getParticipantCount() > 0) {
                     if (state.isPublic()) {
                         rooms.add(state);
                     }
                 } else {
-                    redisTemplate.opsForSet().remove(ACTIVE_ROOMS_SET, roomId);
+                    deleteRoom(roomId);
                 }
             }
         }

@@ -38,21 +38,22 @@ public class WebSocketEventListener {
 
             // 1. Decrement player count in Redis
             ActiveRoomState activeState = roomStateService.decrementParticipantCount(roomId);
+            double playbackPos = activeState != null ? activeState.getPlaybackPosition() : 0.0;
 
             if (activeState != null) {
-                // Broadcast updated state to room participants
+                // Broadcast updated state to remaining room participants
                 messagingTemplate.convertAndSend("/topic/room/" + roomId, activeState);
-
-                // 3. Asynchronously log the disconnection in MongoDB
-                SessionLogEntry sessionLog = SessionLogEntry.builder()
-                        .action("DISCONNECT")
-                        .playbackPosition(activeState.getPlaybackPosition())
-                        .timestamp(Instant.now())
-                        .userId(userId)
-                        .username(username)
-                        .build();
-                watchPartyService.logSessionEventAsync(roomId, sessionLog);
             }
+
+            // 2. Asynchronously log the disconnection in MongoDB
+            SessionLogEntry sessionLog = SessionLogEntry.builder()
+                    .action("DISCONNECT")
+                    .playbackPosition(playbackPos)
+                    .timestamp(Instant.now())
+                    .userId(userId)
+                    .username(username)
+                    .build();
+            watchPartyService.logSessionEventAsync(roomId, sessionLog);
         }
     }
 }

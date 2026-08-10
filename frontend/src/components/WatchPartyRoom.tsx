@@ -68,7 +68,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   const chatMessagesContainerRef = useRef<HTMLDivElement | null>(null);
   const isHost = roomState ? userId === roomState.hostUserId : false;
   const token = localStorage.getItem('syncstream_token');
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+  const apiUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api';
 
   const seekTo = (seconds: number) => {
     if (!playerRef.current) return;
@@ -119,72 +119,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   }, []);
 
 
-  useEffect(() => {
-    const roomApiUrl = `${apiUrl}/rooms`;
-
-    fetch(`${roomApiUrl}/${roomId}?userId=${userId}`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch room state');
-        return res.json();
-      })
-      .then((data: ActiveRoomState) => {
-        setRoomState(data);
-        setLocalPlaying(data.playing);
-        if (data.isPublic !== undefined) setEditIsPublic(data.isPublic);
-        if (data.maxParticipants !== undefined) setEditMaxParticipants(data.maxParticipants);
-      })
-      .catch((err) => console.error('Error fetching room state:', err));
-
-    fetch(`${roomApiUrl}/${roomId}/history`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch room history');
-        return res.json();
-      })
-      .then((data: WatchPartyHistory) => {
-        if (data.chatMessages) {
-          const loadedChats: ChatEvent[] = data.chatMessages.map(msg => ({
-            id: msg.id,
-            userId: msg.userId,
-            username: msg.username,
-            message: msg.message,
-            timestamp: new Date(msg.timestamp).getTime()
-          }));
-          setChats(loadedChats);
-        }
-        if (data.sessionLogs) {
-          const logs = data.sessionLogs.map(log =>
-            `[${new Date(log.timestamp).toLocaleTimeString()}] ${log.username} triggered ${log.action} at ${log.playbackPosition.toFixed(1)}s`
-          );
-          setSystemLogs(logs);
-        }
-      })
-      .catch((err) => console.error('Error loading room history:', err));
-  }, [roomId, userId, apiUrl]);
-
-  useEffect(() => {
-    if (chatMessagesContainerRef.current) {
-      chatMessagesContainerRef.current.scrollTo({
-        top: chatMessagesContainerRef.current.scrollHeight,
-        behavior: 'smooth',
-      });
-    }
-  }, [chats]);
-
-  const handlePlayerReady = () => {
-    console.log('[ReactPlayer] Player loaded and ready');
-    if (roomState) {
-      isProcessingIncomingEvent.current = true;
-      if (!isHost) {
-        seekTo(roomState.playbackPosition);
-      }
-      setLocalPlaying(roomState.playing);
-      setTimeout(() => {
-        isProcessingIncomingEvent.current = false;
-      }, 1000);
-    }
-  };
-
-  const handleRoomStateReceived = (newState: ActiveRoomState) => {
+  const handleRoomStateReceived = useCallback((newState: ActiveRoomState) => {
     setRoomState(newState);
     if (newState.isPublic !== undefined) setEditIsPublic(newState.isPublic);
     if (newState.maxParticipants !== undefined) setEditMaxParticipants(newState.maxParticipants);
@@ -219,13 +154,13 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
         setLocalPlaying(newState.playing);
       }
     }
-  };
+  }, [userId, isHost, roomState]);
 
-  const handleChatMessageReceived = (newChat: ChatEvent) => {
+  const handleChatMessageReceived = useCallback((newChat: ChatEvent) => {
     setChats((prev) => [...prev, newChat]);
-  };
+  }, []);
 
-  const handleEmojiReceived = (emojiEvent: ChatEvent) => {
+  const handleEmojiReceived = useCallback((emojiEvent: ChatEvent) => {
     const count = Math.floor(Math.random() * 2) + 4;
     const streamBatch: FloatingEmoji[] = Array.from({ length: count }, (_, i) => ({
       id: Date.now() + Math.random() + i,
@@ -243,21 +178,21 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
       const batchIds = new Set(streamBatch.map((item) => item.id));
       setFloatingEmojis((prev) => prev.filter((e) => !batchIds.has(e.id)));
     }, 2800);
-  };
+  }, []);
 
-  const handleInviteReceived = (invite: InviteEvent) => {
+  const handleInviteReceived = useCallback((invite: InviteEvent) => {
     setInviteNotification(invite);
     setNotificationCount(prev => prev + 1);
-  };
+  }, []);
 
-  const handleFriendRequestReceived = (data: any) => {
+  const handleFriendRequestReceived = useCallback((data: any) => {
     setInRoomFriendRequest({
       id: data.id,
       senderId: data.senderId,
       senderUsername: data.senderUsername,
     });
     setNotificationCount(prev => prev + 1);
-  };
+  }, []);
 
   const { connected, sendSyncEvent, sendChatMessage, sendEmoji, sendPartyInvite } = useWebSocket({
     roomId,
@@ -270,6 +205,74 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
     onInviteReceived: handleInviteReceived,
     onFriendRequestReceived: handleFriendRequestReceived,
   });
+
+  useEffect(() => {
+    const roomApiUrl = `${apiUrl}/rooms`;
+
+    const fetchState = () => {
+      fetch(`${roomApiUrl}/${roomId}?userId=${userId}`)
+        .then((res) => {
+          if (!res.ok) throw new Error('Failed to fetch room state');
+          return res.json();
+        })
+        .then((data: ActiveRoomState) => {
+          setRoomState(data);
+          setLocalPlaying(data.playing);
+          if (data.isPublic !== undefined) setEditIsPublic(data.isPublic);
+          if (data.maxParticipants !== undefined) setEditMaxParticipants(data.maxParticipants);
+        })
+        .catch((err) => console.error('Error fetching room state:', err));
+    };
+
+    fetchState();
+
+    fetch(`${roomApiUrl}/${roomId}/history`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to fetch room history');
+        return res.json();
+      })
+      .then((data: WatchPartyHistory) => {
+        if (data.chatMessages) {
+          const loadedChats: ChatEvent[] = data.chatMessages.map(msg => ({
+            id: msg.id,
+            userId: msg.userId,
+            username: msg.username,
+            message: msg.message,
+            timestamp: new Date(msg.timestamp).getTime()
+          }));
+          setChats(loadedChats);
+        }
+        if (data.sessionLogs) {
+          const logs = data.sessionLogs.map(log =>
+            `[${new Date(log.timestamp).toLocaleTimeString()}] ${log.username} triggered ${log.action} at ${log.playbackPosition.toFixed(1)}s`
+          );
+          setSystemLogs(logs);
+        }
+      })
+      .catch((err) => console.error('Error loading room history:', err));
+
+    const pollInterval = setInterval(() => {
+      if (!connected) {
+        fetchState();
+      }
+    }, 6000);
+
+    return () => clearInterval(pollInterval);
+  }, [roomId, userId, apiUrl, connected]);
+
+  const handlePlayerReady = () => {
+    console.log('[ReactPlayer] Player loaded and ready');
+    if (roomState) {
+      isProcessingIncomingEvent.current = true;
+      if (!isHost) {
+        seekTo(roomState.playbackPosition);
+      }
+      setLocalPlaying(roomState.playing);
+      setTimeout(() => {
+        isProcessingIncomingEvent.current = false;
+      }, 1000);
+    }
+  };
 
   const handleLocalPlay = () => {
     if (isProcessingIncomingEvent.current) return;
