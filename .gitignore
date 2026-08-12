@@ -55,3 +55,11 @@ backend/src/main/resources/application-prod.yml
 
 # Docker / Local services
 docker-compose.override.yml
+
+
+
+CLOUD_SERVICES_GUIDE.md
+DATABASE_PERSISTANCE_GUIDE.md
+DEPLOYMENT_GUIDE.md
+deployment_issues_report.md
+README.md
