@@ -119,7 +119,10 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   }, []);
 
 
+  const roomStateRef = useRef<ActiveRoomState | null>(null);
+
   const handleRoomStateReceived = useCallback((newState: ActiveRoomState) => {
+    roomStateRef.current = newState;
     setRoomState(newState);
     if (newState.isPublic !== undefined) setEditIsPublic(newState.isPublic);
     if (newState.maxParticipants !== undefined) setEditMaxParticipants(newState.maxParticipants);
@@ -150,11 +153,11 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
         }
       }
     } else {
-      if (roomState && roomState.videoUrl !== newState.videoUrl) {
+      if (roomStateRef.current && roomStateRef.current.videoUrl !== newState.videoUrl) {
         setLocalPlaying(newState.playing);
       }
     }
-  }, [userId, isHost, roomState]);
+  }, [userId]);
 
   const handleChatMessageReceived = useCallback((newChat: ChatEvent) => {
     setChats((prev) => [...prev, newChat]);
@@ -216,6 +219,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
           return res.json();
         })
         .then((data: ActiveRoomState) => {
+          roomStateRef.current = data;
           setRoomState(data);
           setLocalPlaying(data.playing);
           if (data.isPublic !== undefined) setEditIsPublic(data.isPublic);
@@ -262,12 +266,13 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
 
   const handlePlayerReady = () => {
     console.log('[ReactPlayer] Player loaded and ready');
-    if (roomState) {
+    const currentRoomState = roomStateRef.current || roomState;
+    if (currentRoomState) {
       isProcessingIncomingEvent.current = true;
       if (!isHost) {
-        seekTo(roomState.playbackPosition);
+        seekTo(currentRoomState.playbackPosition);
       }
-      setLocalPlaying(roomState.playing);
+      setLocalPlaying(currentRoomState.playing);
       setTimeout(() => {
         isProcessingIncomingEvent.current = false;
       }, 1000);
@@ -279,10 +284,6 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
     if (isHost && playerRef.current) {
       setLocalPlaying(true);
       sendSyncEvent('PLAY', getCurrentTime());
-    } else {
-      if (roomState && !roomState.playing) {
-        setLocalPlaying(false);
-      }
     }
   };
 
