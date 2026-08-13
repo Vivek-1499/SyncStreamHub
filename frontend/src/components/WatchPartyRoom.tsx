@@ -120,8 +120,10 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
 
 
   const roomStateRef = useRef<ActiveRoomState | null>(null);
+  const loadedVideoUrlRef = useRef<string | null>(null);
 
   const handleRoomStateReceived = useCallback((newState: ActiveRoomState) => {
+    const prevUrl = roomStateRef.current?.videoUrl;
     roomStateRef.current = newState;
     setRoomState(newState);
     if (newState.isPublic !== undefined) setEditIsPublic(newState.isPublic);
@@ -132,20 +134,20 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
       setLocalPlaying(newState.playing);
       if (playerRef.current) {
         const currentPlayerTime = getCurrentTime();
-        const timeDelta = Math.abs(currentPlayerTime - newState.playbackPosition);
+        const timeDelta = Math.abs(currentPlayerTime - (newState.playbackPosition || 0));
 
         if (!newState.playing) {
           if (timeDelta > 0.5) {
             isProcessingIncomingEvent.current = true;
-            seekTo(newState.playbackPosition);
+            seekTo(newState.playbackPosition || 0);
             setTimeout(() => {
               isProcessingIncomingEvent.current = false;
             }, 300);
           }
         } else {
-          if (timeDelta > 1.5) {
+          if (timeDelta > 2.0) {
             isProcessingIncomingEvent.current = true;
-            seekTo(newState.playbackPosition);
+            seekTo(newState.playbackPosition || 0);
             setTimeout(() => {
               isProcessingIncomingEvent.current = false;
             }, 300);
@@ -153,7 +155,8 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
         }
       }
     } else {
-      if (roomStateRef.current && roomStateRef.current.videoUrl !== newState.videoUrl) {
+      if (prevUrl && prevUrl !== newState.videoUrl) {
+        loadedVideoUrlRef.current = null;
         setLocalPlaying(newState.playing);
       }
     }
@@ -215,6 +218,11 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
     const fetchState = () => {
       fetch(`${roomApiUrl}/${roomId}?userId=${userId}`)
         .then((res) => {
+          if (res.status === 404) {
+            localStorage.removeItem('syncstream_roomId');
+            onExit();
+            throw new Error('Room no longer exists');
+          }
           if (!res.ok) throw new Error('Failed to fetch room state');
           return res.json();
         })
@@ -262,45 +270,64 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
     }, 6000);
 
     return () => clearInterval(pollInterval);
-  }, [roomId, userId, apiUrl, connected]);
+  }, [roomId, userId, apiUrl, connected, onExit]);
 
-  const handlePlayerReady = () => {
-    console.log('[ReactPlayer] Player loaded and ready');
-    const currentRoomState = roomStateRef.current || roomState;
-    if (currentRoomState) {
-      isProcessingIncomingEvent.current = true;
-      if (!isHost) {
-        seekTo(currentRoomState.playbackPosition);
-      }
-      setLocalPlaying(currentRoomState.playing);
-      setTimeout(() => {
-        isProcessingIncomingEvent.current = false;
-      }, 1000);
+  const handlePlayerReady = useCallback(() => {
+    const currentRoomState = roomStateRef.current;
+    if (!currentRoomState) return;
+
+    const currentUrl = currentRoomState.videoUrl;
+    if (loadedVideoUrlRef.current === currentUrl) {
+      return;
     }
-  };
+    loadedVideoUrlRef.current = currentUrl;
+    console.log('[ReactPlayer] Player loaded and ready for URL:', currentUrl);
 
-  const handleLocalPlay = () => {
-    if (isProcessingIncomingEvent.current) return;
-    if (isHost && playerRef.current) {
+    isProcessingIncomingEvent.current = true;
+    if (userId !== currentRoomState.hostUserId) {
+      seekTo(currentRoomState.playbackPosition || 0);
+    }
+    setLocalPlaying(currentRoomState.playing);
+    setTimeout(() => {
+      isProcessingIncomingEvent.current = false;
+    }, 300);
+  }, [userId]);
+
+  const handleLocalPlay = useCallback(() => {
+    const currentRoomState = roomStateRef.current;
+    const currentIsHost = currentRoomState ? userId === currentRoomState.hostUserId : false;
+
+    if (currentIsHost) {
+      isProcessingIncomingEvent.current = false;
       setLocalPlaying(true);
       sendSyncEvent('PLAY', getCurrentTime());
+    } else {
+      if (isProcessingIncomingEvent.current) return;
+      if (currentRoomState && !currentRoomState.playing) {
+        setLocalPlaying(false);
+      }
     }
-  };
+  }, [userId, sendSyncEvent]);
 
-  const handleLocalPause = () => {
-    if (isProcessingIncomingEvent.current) return;
-    if (isHost && playerRef.current) {
+  const handleLocalPause = useCallback(() => {
+    const currentRoomState = roomStateRef.current;
+    const currentIsHost = currentRoomState ? userId === currentRoomState.hostUserId : false;
+
+    if (currentIsHost) {
+      isProcessingIncomingEvent.current = false;
       setLocalPlaying(false);
       sendSyncEvent('PAUSE', getCurrentTime());
     }
-  };
+  }, [userId, sendSyncEvent]);
 
-  const handleLocalSeek = (seconds: number) => {
-    if (isProcessingIncomingEvent.current) return;
-    if (isHost) {
+  const handleLocalSeek = useCallback((seconds: number) => {
+    const currentRoomState = roomStateRef.current;
+    const currentIsHost = currentRoomState ? userId === currentRoomState.hostUserId : false;
+
+    if (currentIsHost && !isProcessingIncomingEvent.current) {
       sendSyncEvent('SEEK', seconds);
     }
-  };
+  }, [userId, sendSyncEvent]);
 
   const handleLocalFileSelect = (_e: React.ChangeEvent<HTMLInputElement>) => {};
 
@@ -310,6 +337,9 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
 
     if (sourceType === 'url') {
       if (!newVideoUrl.trim()) return;
+      loadedVideoUrlRef.current = null;
+      isProcessingIncomingEvent.current = false;
+      setLocalPlaying(false);
       sendSyncEvent('CHANGE_VIDEO', 0, newVideoUrl.trim());
       setNewVideoUrl('');
       return;
@@ -322,7 +352,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
     const formData = new FormData();
     formData.append('file', file);
     try {
-      const res = await fetch(`${apiUrl}/uploads/video`, { method: 'POST', body: formData });
+      const res = await authFetch(`${apiUrl}/uploads/video`, { method: 'POST', body: formData });
       if (!res.ok) throw new Error('Upload failed');
       const data: { url: string } = await res.json();
       sendSyncEvent('CHANGE_VIDEO', 0, data.url);

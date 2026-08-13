@@ -44,6 +44,8 @@ public class SyncWebSocketController {
             return;
         }
         
+        boolean isHost = activeState.getHostUserId() == null || activeState.getHostUserId().equals(event.getUserId());
+
         switch (event.getAction().toUpperCase()) {
             case "JOIN":
                 if (headerAccessor.getSessionAttributes() != null) {
@@ -59,28 +61,42 @@ public class SyncWebSocketController {
                 break;
                 
             case "PLAY":
-                activeState.setPlaying(true);
-                activeState.setPlaybackPosition(event.getPlaybackPosition());
-                roomStateService.saveRoomState(activeState);
+                if (isHost) {
+                    activeState.setPlaying(true);
+                    activeState.setPlaybackPosition(event.getPlaybackPosition());
+                    roomStateService.saveRoomState(activeState);
+                } else {
+                    log.warn("Non-host user {} tried to trigger PLAY in room {}", event.getUsername(), roomId);
+                }
                 break;
                 
             case "PAUSE":
-                activeState.setPlaying(false);
-                activeState.setPlaybackPosition(event.getPlaybackPosition());
-                roomStateService.saveRoomState(activeState);
+                if (isHost) {
+                    activeState.setPlaying(false);
+                    activeState.setPlaybackPosition(event.getPlaybackPosition());
+                    roomStateService.saveRoomState(activeState);
+                } else {
+                    log.warn("Non-host user {} tried to trigger PAUSE in room {}", event.getUsername(), roomId);
+                }
                 break;
                 
             case "SEEK":
-                activeState.setPlaybackPosition(event.getPlaybackPosition());
-                roomStateService.saveRoomState(activeState);
+                if (isHost) {
+                    activeState.setPlaybackPosition(event.getPlaybackPosition());
+                    roomStateService.saveRoomState(activeState);
+                } else {
+                    log.warn("Non-host user {} tried to trigger SEEK in room {}", event.getUsername(), roomId);
+                }
                 break;
 
             case "CHANGE_VIDEO":
-                if (event.getVideoUrl() != null && !event.getVideoUrl().trim().isEmpty()) {
+                if (isHost && event.getVideoUrl() != null && !event.getVideoUrl().trim().isEmpty()) {
                     activeState.setVideoUrl(event.getVideoUrl());
                     activeState.setPlaying(false);
                     activeState.setPlaybackPosition(0.0);
                     roomStateService.saveRoomState(activeState);
+                } else if (!isHost) {
+                    log.warn("Non-host user {} tried to CHANGE_VIDEO in room {}", event.getUsername(), roomId);
                 }
                 break;
                 

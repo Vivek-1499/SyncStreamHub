@@ -38,7 +38,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/api/auth/**", "/api/rooms/**", "/api/friends/**", "/ws", "/ws/**", "/ws-sockjs", "/ws-sockjs/**", "/uploads/**").permitAll()
+                        .requestMatchers("/api/auth/**", "/api/rooms/**", "/api/friends/**", "/api/uploads/**", "/ws", "/ws/**", "/ws-sockjs", "/ws-sockjs/**", "/uploads/**").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
