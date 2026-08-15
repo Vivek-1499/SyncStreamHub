@@ -607,7 +607,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
           </div>
 
           <div className="system-logs-container">
-            <h4>Room Event Log (MongoDB Audit Feed)</h4>
+            <h4>Room Activity Log</h4>
             <div className="system-logs-list">
               {systemLogs.length === 0 && <p className="empty-text">No events logged yet.</p>}
               {systemLogs.map((logStr, i) => (

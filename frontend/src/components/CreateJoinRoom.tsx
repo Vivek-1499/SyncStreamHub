@@ -259,7 +259,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
           <div className="lobby-brand">
             <span className="lobby-logo animate-bounce">🍿</span>
             <h1>SyncStream <span className="highlight-text">Hub</span></h1>
-            <p className="lobby-subtitle">JWT Token Auth & BCrypt Security (PostgreSQL)</p>
+            <p className="lobby-subtitle">Watch movies & videos together with friends in real-time</p>
           </div>
 
           <div className="auth-tabs">
@@ -348,7 +348,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
           <div className="dashboard-grid">
             <div className="dashboard-subcard">
               <h3>Create a Watch Party</h3>
-              <p>Initialize a room as **Host** to control stream & sync.</p>
+              <p>Start a room as Host to control video playback and sync.</p>
               <form onSubmit={handleCreateRoom} className="lobby-form">
                 <div className="form-group">
                   <label htmlFor="create-room-id">Room Name / ID</label>
@@ -429,7 +429,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
           {/* Public Watch Party Directory Card Grid */}
           <div className="public-directory-section">
             <div className="directory-header-row">
-              <h3>🌐 Live Watch Parties Directory (Redis Active Rooms)</h3>
+              <h3>🌐 Live Watch Parties Directory</h3>
               <button
                 type="button"
                 className="btn-secondary refresh-directory-btn"
