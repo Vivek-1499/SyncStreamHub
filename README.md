@@ -1,114 +1,118 @@
 # SyncStream Hub 🎬🍿
 
-SyncStream Hub is a modern, real-time collaborative video watch party platform. It allows users to create virtual rooms, upload videos or embed external video streams, chat with friends, and synchronize video playback (play, pause, seek) seamlessly in real-time using WebSockets.
+> 🌐 **Live Application:** [https://syncstreamhub.pages.dev/](https://syncstreamhub.pages.dev/)
+
+SyncStream Hub is a modern, high-performance real-time collaborative video watch party platform. It enables users to create public or private virtual watch party rooms, upload videos (via Cloudflare R2 cloud storage or local disk) or embed external streams (YouTube, HLS/m3u8, direct MP4), chat live with friends, manage party invitations, and synchronize video playback (play, pause, seek) seamlessly in real-time with sub-second accuracy using WebSockets.
+
+---
+
+## 🌐 Live Demo & Deployment Architecture
+
+- **Frontend Hosting:** Deployed globally via **Cloudflare Pages** at [https://syncstreamhub.pages.dev/](https://syncstreamhub.pages.dev/).
+- **Backend Hosting:** Powered by a Spring Boot application running on **AWS EC2**, serving REST APIs and WebSocket (STOMP) connections.
+- **Media Storage:** Integrated with **Cloudflare R2** for fast, edge-cached video object storage with local storage fallback.
 
 ---
 
 ## 🏗️ Architecture Overview
 
-SyncStream Hub uses a decoupled architecture with a **Spring Boot** backend and a **React (Vite + TypeScript)** frontend, powered by a specialized multi-database system designed for scale, speed, and reliability:
+SyncStream Hub utilizes a decoupled, event-driven architecture combining a **React (Vite + TypeScript)** frontend with a **Spring Boot** backend, supported by a multi-database architecture tailored for performance, security, and real-time reliability:
 
 ```mermaid
 graph TD
-    Client[React Frontend] <-->|WebSocket / STOMP| BE[Spring Boot Backend]
+    Client["React Frontend (Cloudflare Pages)"] <-->|WebSocket / STOMP| BE["Spring Boot Backend (AWS EC2)"]
     Client <-->|REST API| BE
     BE <-->|User Accounts & Auth Data| Postgres[(PostgreSQL)]
     BE <-->|Session History & Chat Logs| Mongo[(MongoDB)]
     BE <-->|Active Room State & Live Cache| Redis[(Redis)]
-    BE <-->|Local Video Storage| Disk[(uploaded-videos/)]
+    BE <-->|Cloud Media Uploads| R2["Cloudflare R2 Storage"]
+    BE <-->|Local Video Fallback| Disk["uploaded-videos/"]
 ```
 
-### Database Responsibilities:
-- **PostgreSQL**: Stores structured relational data including User Profiles, Password Credentials, Room Configurations, and Room Permissions.
-- **MongoDB**: Handles high-throughput, unstructured write loads such as Chat Message Streams, Session Logs, and Watch Party History logs asynchronously.
-- **Redis**: Manages volatile, fast-access in-memory cache data like active room memberships, live playback sync state, and real-time user presence.
+### Multi-Database Responsibilities:
+- **PostgreSQL**: Stores core relational data including User Accounts, Hashed Credentials, Room Configurations, Friends system, and Ownership/Permissions.
+- **MongoDB**: High-throughput NoSQL document store handling Chat Message Streams, Watch Party History logs, and Session Analytics asynchronously without blocking real-time frames.
+- **Redis**: High-speed in-memory store managing live playback state, active room memberships, socket sessions, and automated empty room purging.
+- **Cloudflare R2 / Disk**: Scalable video blob storage for uploaded user videos, served via CDN public URLs or static backend handlers.
 
 ---
 
-## ✨ Features
+## ✨ Core Features & Recent Enhancements
 
-- **Real-Time Video Sync:** Play, pause, and seek events are instantly synchronized across all users in a room using WebSockets (STOMP protocol).
-- **Live Group Chat:** Integrated chat feature to discuss scenes with other room members in real-time.
-- **Video Uploads & Custom Streams:** Upload local video files (up to 2GB) directly to the platform or stream via external URLs (MP4, HLS/m3u8, YouTube).
-- **Room Management:** Create private or public watch party rooms, configure permissions, and invite users via unique room links.
-- **User Authentication:** Secure user registration, authentication, and session handling.
-- **Asynchronous Session Logging:** Complete watch party logs and chat histories are recorded asynchronously to MongoDB for session review.
+- **⚡ Real-Time Video Sync (100% Event-Driven):** Instant, sub-second sync for Play, Pause, and Seek events using WebSockets (STOMP over SockJS) without periodic network polling loops.
+- **🎯 High-Precision Playback Stabilization:** Fixed `ReactPlayer` re-render infinite loops (`onReady` guards and `useCallback` memoization), ensuring stutter-free synchronized video playback for both host and viewers.
+- **👥 Friends & Party Invite System:** Send and accept friend requests, check online status, invite friends directly to active watch party rooms, and manage viewer/host reclaim edge cases.
+- **🔒 Room Privacy & Controls:** Create public or private watch parties with customizable room permissions, viewer access, and host control locks.
+- **☁️ Cloudflare R2 Storage Integration:** Seamless video file uploading directly to Cloudflare R2 bucket storage with automatic fallback to local disk storage.
+- **💬 Real-Time Group Chat & Reactions:** Integrated live chat with message persistence to MongoDB and instant broadcast to all room members.
+- **📱 Responsive & Glassmorphic UI:** Modern UI crafted with custom glassmorphism styling, responsive layouts for mobile/desktop, custom Popcorn Play branding/favicon, and OpenGraph SEO cards.
 
 ---
 
 ## ⚙️ Application Profiles & Configuration Management
 
-The backend uses Spring Boot **Active Profiles** to isolate development setups from production configurations.
+The backend utilizes Spring Boot **Active Profiles** to isolate local development from cloud production setups.
 
 ### Configuration Hierarchy
 ```text
 backend/src/main/resources/
 ├── application.yml         # Base configuration (Shared defaults & profile activation)
-├── application-local.yml   # Active profile for local development & Docker setup
-└── application-prod.yml    # (Planned) Production profile for cloud DB deployment
+├── application-local.yml   # Active profile for local development & Docker container setup
+└── application-prod.yml    # Production profile for AWS EC2 & Cloud DB deployment (SSL, R2 storage)
 ```
 
-- **`application.yml`**: Contains baseline settings shared across all environments (multipart upload limits, application name, logging format). Activates the default profile via environment variable:
+- **`application.yml`**: Baseline settings shared across environments (multipart upload limit up to 2GB, application naming, R2 cloud storage property structure). Activates profile via environment variable:
   ```yaml
   spring:
     profiles:
       active: ${SPRING_PROFILES_ACTIVE:local}
   ```
-- **`application-local.yml`**: Overrides base settings for local development. Pre-configured for local PostgreSQL, MongoDB, and Redis instances (running via Docker or local DB servers).
-- **`application-prod.yml` *(Planned / In Progress)***: Environment profile specifically tailored for production deployments. It will manage cloud database connection strings (Neon/Supabase for PostgreSQL, MongoDB Atlas, Upstash Redis) with SSL enabled.
+- **`application-local.yml`**: Overrides base settings for local execution against Docker containers (PostgreSQL, MongoDB, Redis).
+- **`application-prod.yml`**: Production profile for AWS EC2 deployment connecting to cloud-hosted databases (Neon/Supabase PostgreSQL, MongoDB Atlas, Upstash Redis) and Cloudflare R2 bucket credentials.
 
 ---
 
-## 📥 How Data is Added, Managed, and Stored
+## 📥 How Data is Managed and Stored
 
-Data enters and moves through **SyncStream Hub** via four primary pathways:
+Data flows through **SyncStream Hub** via five main pathways:
 
-### 1. User & Auth Data (PostgreSQL)
-- **Ingestion**: When a new user registers or signs in via `/api/auth/register` and `/api/auth/login`, JPA repositories save user credentials and account details to PostgreSQL.
-- **Persistence**: Relational schema ensures strict data integrity for user IDs, hashed passwords, and room ownership permissions.
-
-### 2. Room & Active Playback State (PostgreSQL + Redis)
-- **Ingestion**: Creating a room via `/api/rooms` creates a master room record in PostgreSQL.
-- **Caching**: Active room details, current video position, playback state (playing/paused), and connected socket clients are cached in **Redis** for sub-millisecond retrieval by WebSocket controllers.
-
-### 3. Video Uploads & Storage (Local Disk / Static Handler)
-- **Ingestion**: Users can upload video files using the endpoint `POST /api/uploads/video` (Multipart Form Data).
-- **File Limit**: Spring Boot is configured to accept video uploads up to **2GB** (`max-file-size: 2GB`).
-- **Storage Location**: Uploaded files are assigned a unique UUID filename and stored in the project's root `uploaded-videos/` directory.
-- **Serving**: Videos are served to frontend player instances via Spring WebMVC static resource handler mapped to `http://localhost:8080/uploads/{filename}`.
-
-### 4. Chat Logs & Session History (MongoDB)
-- **Ingestion**: Real-time chat messages and playback actions dispatched over WebSockets (`/app/chat`, `/app/sync`) are pushed to MongoDB.
-- **Persistence**: Mongo document collections (`WatchPartyHistory`, `ChatMessageEntry`, `SessionLogEntry`) log room events asynchronously without blocking real-time WebSocket frames.
+1. **User Accounts & Auth (PostgreSQL):** Registered users and authentication credentials handled via `/api/auth/register` and `/api/auth/login` using Spring Data JPA.
+2. **Room & Playback State (PostgreSQL + Redis):** Master room metadata is stored in PostgreSQL, while active playback positions, play/pause flags, and connected users are cached in Redis for low-latency WebSocket synchronization.
+3. **Video Uploads & Storage (Cloudflare R2 / Local Disk):** Multipart uploads (`POST /api/uploads/video`) are streamed directly to Cloudflare R2 object storage when enabled (`R2_ENABLED=true`), or stored in the local `uploaded-videos/` directory.
+4. **Chat Logs & Session History (MongoDB):** Chat messages and room action streams (`/app/chat`, `/app/sync`) are persisted asynchronously to MongoDB collections (`WatchPartyHistory`, `ChatMessageEntry`).
+5. **Friends & Party Invites (PostgreSQL):** Friend relationships and room invitations are maintained in PostgreSQL relational tables for fast access and status updates.
 
 ---
 
 ## 🛠️ Tech Stack
 
 ### Frontend
+- **Hosting:** Cloudflare Pages
 - **Framework:** React 18+ with Vite
 - **Language:** TypeScript
-- **Styling:** CSS3 & Modern Custom Styles
+- **Styling:** CSS3 & Modern Glassmorphic Design System
 - **Real-Time Sync:** `@stomp/stompjs` & `sockjs-client`
 
 ### Backend
+- **Hosting:** AWS EC2
 - **Framework:** Spring Boot 3.3 (Java 17)
-- **Security & Database ORM:** Spring Security, Spring Data JPA, Spring Data MongoDB, Spring Data Redis
+- **Security & Persistence:** Spring Security, Spring Data JPA, Spring Data MongoDB, Spring Data Redis
 - **Real-Time Communications:** Spring WebSocket & STOMP Message Broker
 - **Build Tool:** Maven
 
-### Middleware & Storage
-- **PostgreSQL:** Relational database for Users & Auth.
-- **MongoDB:** NoSQL Document database for Chat Logs & Session Analytics.
-- **Redis:** In-memory key-value store for Active Room State & Live Sync.
-- **Docker Compose:** Local multi-container database orchestration.
+### Storage & Infrastructure
+- **Cloudflare R2:** Cloud object storage for uploaded video streams.
+- **PostgreSQL:** Relational database for Users, Friends, and Room metadata.
+- **MongoDB:** Document store for Chat logs & Session history.
+- **Redis:** In-memory cache for Live Room State & Socket session management.
+- **Docker Compose:** Multi-container orchestration for local development.
 
 ---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-Ensure you have the following installed on your machine:
+Ensure you have installed:
 - **Java 17 JDK** or higher
 - **Node.js (v18+)** & npm
 - **Maven**
@@ -116,7 +120,7 @@ Ensure you have the following installed on your machine:
 
 ---
 
-### Step 1: Start Databases with Docker
+### Step 1: Start Local Databases with Docker
 Launch PostgreSQL, MongoDB, and Redis containers in the background:
 ```bash
 docker-compose up -d
@@ -125,11 +129,11 @@ docker-compose up -d
 ---
 
 ### Step 2: Configure Environment Variables
-Copy the `.env.example` file to create your local `.env` file:
+Copy `.env.example` to create your local `.env` file:
 ```bash
 cp .env.example .env
 ```
-Customize your credentials in `.env`:
+Customize credentials in `.env`:
 ```env
 DB_PASSWORD=your_secure_password
 SPRING_DATASOURCE_PASSWORD=your_secure_password
@@ -147,7 +151,7 @@ SPRING_DATA_MONGODB_URI=mongodb://root:your_secure_password@localhost:27017/sync
    ```bash
    mvn spring-boot:run
    ```
-The backend server will launch at `http://localhost:8080`.
+The backend server will start at `http://localhost:8080`.
 
 ---
 
@@ -175,15 +179,16 @@ SyncStream Hub/
 │   ├── src/main/resources/               # Application profiles & configuration
 │   │   ├── application.yml               # Base configuration file
 │   │   ├── application-local.yml         # Local development profile override
-│   │   └── application-prod.yml          # (Planned) Production profile override
+│   │   └── application-prod.yml          # Production profile override
 │   └── pom.xml                           # Maven dependencies & build setup
 │
 ├── frontend/                             # React TypeScript SPA
 │   ├── src/                              # Components, WebSocket hooks, pages, styles
+│   ├── public/                           # Favicon & static assets
 │   ├── package.json                      # Frontend dependencies & scripts
 │   └── vite.config.ts                    # Vite configuration
 │
-├── uploaded-videos/                      # Server-side directory for uploaded video files
+├── uploaded-videos/                      # Server-side directory for uploaded video files (fallback)
 ├── docker-compose.yml                    # Multi-container DB service definitions
 ├── DATABASE_PERSISTENCE_GUIDE.md         # In-depth database persistence & inspection guide
 ├── DEPLOYMENT_GUIDE.md                   # Cloud & VPS production deployment blueprint
@@ -195,15 +200,14 @@ SyncStream Hub/
 
 ## 📚 Dedicated Documentation Guides
 
-For in-depth explanations on database management and production deployment, refer to the dedicated guide files in the root folder:
-
-- 📖 **[DATABASE_PERSISTENCE_GUIDE.md](file:///c:/Users/Vivek/Documents/Java/SyncStream%20Hub/DATABASE_PERSISTENCE_GUIDE.md)**: Detailed breakdown of database storage engines (WiredTiger, Relational Heap/WAL, Redis AOF), Docker volumes, accessing data via GUI clients (MongoDB Compass, DBeaver, Redis Insight) or CLI, and automated database backups.
-- 🚀 **[DEPLOYMENT_GUIDE.md](file:///c:/Users/Vivek/Documents/Java/SyncStream%20Hub/DEPLOYMENT_GUIDE.md)**: End-to-end production deployment blueprint for Vercel (Frontend), Render (Backend), Managed Cloud DBs (Neon/Supabase PostgreSQL, MongoDB Atlas, Upstash Redis), or single self-hosted VPS deployment.
+- 📖 **[DATABASE_PERSISTENCE_GUIDE.md](file:///c:/Users/Vivek/Documents/Java/SyncStream%20Hub/DATABASE_PERSISTENCE_GUIDE.md)**: Detailed breakdown of database storage engines (WiredTiger, Relational Heap/WAL, Redis AOF), Docker volumes, accessing data via GUI clients (MongoDB Compass, DBeaver, Redis Insight), and database backups.
+- 🚀 **[DEPLOYMENT_GUIDE.md](file:///c:/Users/Vivek/Documents/Java/SyncStream%20Hub/DEPLOYMENT_GUIDE.md)**: End-to-end production deployment blueprint for Cloudflare Pages (Frontend), AWS EC2 / Render (Backend), Cloud DBs (Neon/Supabase PostgreSQL, MongoDB Atlas, Upstash Redis), and Cloudflare R2 storage.
 
 ---
 
 ## 🔒 Security Best Practices
-- **Environment Isolation:** Secrets (database passwords, API keys) are kept in `.env` and `application-local.yml` (ignored by Git).
-- **Target Exclusions:** Build outputs (`backend/target/`, `frontend/node_modules/`, `uploaded-videos/*`) are ignored via `.gitignore`.
+- **Environment Isolation:** Secrets (DB passwords, Cloudflare R2 credentials) are stored in `.env` or environment variables and ignored by Git.
+- **Target Exclusions:** Build outputs (`backend/target/`, `frontend/node_modules/`, `uploaded-videos/*`) are excluded via `.gitignore`.
+- **CORS & WebSocket Security:** Configured Spring Security with permitted CORS preflight OPTIONS requests, allowed origins, and SockJS polyfills.
 - **Production Overrides:** When deploying to production (`application-prod.yml`), inject credentials via platform environment variables rather than storing hardcoded strings.
 
