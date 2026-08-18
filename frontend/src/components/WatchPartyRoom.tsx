@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import ReactPlayer from 'react-player';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { FriendsModal } from './FriendsModal';
+import { Spinner, FullScreenLoader } from './Spinner';
 import type { ActiveRoomState, ChatEvent, WatchPartyHistory, InviteEvent } from '../types';
 import { authFetch, isTokenExpired } from '../utils/authUtils';
 
@@ -40,6 +41,11 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   const isProcessingIncomingEvent = useRef<boolean>(false);
 
   const [roomState, setRoomState] = useState<ActiveRoomState | null>(null);
+  const [isRoomInitializing, setIsRoomInitializing] = useState<boolean>(true);
+  const [isUpdatingStream, setIsUpdatingStream] = useState<boolean>(false);
+  const [isSavingSettings, setIsSavingSettings] = useState<boolean>(false);
+  const [isSendingChatFriendReq, setIsSendingChatFriendReq] = useState<boolean>(false);
+
   const [chats, setChats] = useState<ChatEvent[]>([]);
   const [chatMessage, setChatMessage] = useState<string>('');
   const [systemLogs, setSystemLogs] = useState<string[]>([]);
@@ -233,7 +239,10 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
           if (data.isPublic !== undefined) setEditIsPublic(data.isPublic);
           if (data.maxParticipants !== undefined) setEditMaxParticipants(data.maxParticipants);
         })
-        .catch((err) => console.error('Error fetching room state:', err));
+        .catch((err) => console.error('Error fetching room state:', err))
+        .finally(() => {
+          setIsRoomInitializing(false);
+        });
     };
 
     fetchState();
@@ -337,11 +346,13 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
 
     if (sourceType === 'url') {
       if (!newVideoUrl.trim()) return;
+      setIsUpdatingStream(true);
       loadedVideoUrlRef.current = null;
       isProcessingIncomingEvent.current = false;
       setLocalPlaying(false);
       sendSyncEvent('CHANGE_VIDEO', 0, newVideoUrl.trim());
       setNewVideoUrl('');
+      setTimeout(() => setIsUpdatingStream(false), 600);
       return;
     }
 
@@ -349,6 +360,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
     const file = fileInput?.files?.[0];
     if (!file) return;
 
+    setIsUpdatingStream(true);
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -358,12 +370,15 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
       sendSyncEvent('CHANGE_VIDEO', 0, data.url);
     } catch (err) {
       console.error('Video upload failed', err);
+    } finally {
+      setIsUpdatingStream(false);
     }
   };
 
   const handleSaveRoomSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isHost) return;
+    setIsSavingSettings(true);
     try {
       const res = await authFetch(
         `${apiUrl}/rooms/${roomId}/settings?isPublic=${editIsPublic}&maxParticipants=${editMaxParticipants}`,
@@ -376,11 +391,14 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
       }
     } catch (e) {
       console.error('Failed to update room settings', e);
+    } finally {
+      setIsSavingSettings(false);
     }
   };
 
   const handleSendChatFriendRequest = async (targetUsername: string) => {
     setChatUserStatus('');
+    setIsSendingChatFriendReq(true);
     try {
       const res = await authFetch(`${apiUrl}/friends/request?username=${encodeURIComponent(targetUsername)}`, {
         method: 'POST',
@@ -393,6 +411,8 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
       }
     } catch (e) {
       setChatUserStatus('⚠️ Server error sending friend request');
+    } finally {
+      setIsSendingChatFriendReq(false);
     }
   };
 
@@ -405,6 +425,15 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
   };
 
   const reactionEmojis = ['❤️', '😂', '😮', '🎉', '👍', '🔥'];
+
+  if (isRoomInitializing || !roomState) {
+    return (
+      <FullScreenLoader
+        message="Connecting to Watch Party..."
+        subtext={`Syncing media stream & room state for '${roomId}'...`}
+      />
+    );
+  }
 
   return (
     <div className="room-container">
@@ -560,6 +589,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                   value={sourceType}
                   onChange={(e) => setSourceType(e.target.value as VideoSourceType)}
                   className="lobby-input toolbar-input"
+                  disabled={isUpdatingStream}
                 >
                   <option value="url">Paste URL</option>
                   <option value="device">Choose from device</option>
@@ -572,6 +602,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                     value={newVideoUrl}
                     onChange={(e) => setNewVideoUrl(e.target.value)}
                     className="lobby-input toolbar-input"
+                    disabled={isUpdatingStream}
                   />
                 ) : (
                   <input
@@ -579,11 +610,20 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                     accept="video/*"
                     onChange={handleLocalFileSelect}
                     className="lobby-input toolbar-input"
+                    disabled={isUpdatingStream}
                   />
                 )}
 
-                <button type="submit" className="btn-primary toolbar-btn">
-                  Update Stream
+                <button
+                  type="submit"
+                  className={`btn-primary toolbar-btn ${isUpdatingStream ? 'btn-loading' : ''}`}
+                  disabled={isUpdatingStream}
+                >
+                  {isUpdatingStream ? (
+                    <Spinner size="xs" label="Updating..." />
+                  ) : (
+                    'Update Stream'
+                  )}
                 </button>
               </form>
             ) : (
@@ -688,8 +728,16 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
               <p>Send a friend request to <strong>{selectedChatUser}</strong>?</p>
               {chatUserStatus && <div className="modal-status-msg">{chatUserStatus}</div>}
               <div className="action-btns" style={{ justifyContent: 'center', marginTop: '1rem', gap: '1rem' }}>
-                <button className="btn-primary" onClick={() => handleSendChatFriendRequest(selectedChatUser)}>
-                  ➕ Add Friend
+                <button
+                  className="btn-primary"
+                  onClick={() => handleSendChatFriendRequest(selectedChatUser)}
+                  disabled={isSendingChatFriendReq}
+                >
+                  {isSendingChatFriendReq ? (
+                    <Spinner size="xs" label="Sending..." />
+                  ) : (
+                    '➕ Add Friend'
+                  )}
                 </button>
                 <button className="btn-secondary" onClick={() => setSelectedChatUser(null)}>
                   Close
@@ -764,6 +812,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                   value={editIsPublic ? 'public' : 'private'}
                   onChange={(e) => setEditIsPublic(e.target.value === 'public')}
                   className="lobby-input lobby-select"
+                  disabled={isSavingSettings}
                 >
                   <option value="public">🌐 Public Party (Visible in Directory)</option>
                   <option value="private">🔒 Private Party (Invite / Direct Link Only)</option>
@@ -777,6 +826,7 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
                   value={editMaxParticipants}
                   onChange={(e) => setEditMaxParticipants(parseInt(e.target.value, 10))}
                   className="lobby-input lobby-select"
+                  disabled={isSavingSettings}
                 >
                   <option value={2}>2 Viewers</option>
                   <option value={5}>5 Viewers</option>
@@ -788,7 +838,9 @@ export const WatchPartyRoom: React.FC<WatchPartyRoomProps> = ({
               </div>
 
               <div className="action-btns" style={{ marginTop: '1.5rem', gap: '1rem' }}>
-                <button type="submit" className="btn-primary">Save Settings</button>
+                <button type="submit" className="btn-primary" disabled={isSavingSettings}>
+                  {isSavingSettings ? <Spinner size="xs" label="Saving..." /> : 'Save Settings'}
+                </button>
                 <button type="button" className="btn-secondary" onClick={() => setShowSettingsModal(false)}>Cancel</button>
               </div>
             </form>

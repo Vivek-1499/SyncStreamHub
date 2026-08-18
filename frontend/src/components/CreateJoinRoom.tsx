@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ActiveRoomState, AuthResponse } from '../types';
 import { FriendsModal } from './FriendsModal';
+import { Spinner } from './Spinner';
 import { isTokenExpired, clearUserSession, authFetch } from '../utils/authUtils';
 
 interface CreateJoinRoomProps {
@@ -16,16 +17,22 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
 
   const [createRoomId, setCreateRoomId] = useState('');
   const [isPublic, setIsPublic] = useState<boolean>(true);
   const [maxParticipants, setMaxParticipants] = useState<number>(10);
+  const [isCreateRoomLoading, setIsCreateRoomLoading] = useState(false);
 
   const [joinRoomId, setJoinRoomId] = useState('');
   const [roomError, setRoomError] = useState('');
   const [roomSuccess, setRoomSuccess] = useState('');
+  const [isJoinRoomLoading, setIsJoinRoomLoading] = useState(false);
 
   const [publicRooms, setPublicRooms] = useState<ActiveRoomState[]>([]);
+  const [isRefreshingDirectory, setIsRefreshingDirectory] = useState(false);
+  const [joiningPublicRoomId, setJoiningPublicRoomId] = useState<string | null>(null);
+
   const [showFriendsModal, setShowFriendsModal] = useState(false);
   const [notificationCount, setNotificationCount] = useState<number>(0);
 
@@ -81,6 +88,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
   }, [apiUrl]);
 
   const fetchPublicRooms = useCallback(async () => {
+    setIsRefreshingDirectory(true);
     try {
       const res = await fetch(`${apiUrl}/rooms/public`);
       if (res.ok) {
@@ -89,6 +97,8 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
       }
     } catch (err) {
       console.error('Failed to load public watch party directory', err);
+    } finally {
+      setIsRefreshingDirectory(false);
     }
   }, [apiUrl]);
 
@@ -113,6 +123,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
       return;
     }
 
+    setIsAuthLoading(true);
     try {
       const response = await fetch(`${apiUrl}/auth/register`, {
         method: 'POST',
@@ -131,6 +142,8 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
       handleAuthSuccess(data);
     } catch (err: any) {
       setAuthError(err.message || 'Server communication error.');
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
@@ -142,6 +155,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
       return;
     }
 
+    setIsAuthLoading(true);
     try {
       const response = await fetch(`${apiUrl}/auth/login`, {
         method: 'POST',
@@ -159,6 +173,8 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
       handleAuthSuccess(data);
     } catch (err: any) {
       setAuthError(err.message || 'Server communication error.');
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
@@ -201,13 +217,13 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     const cleanRoomId = createRoomId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
     if (!cleanRoomId || !user) return;
 
+    setIsCreateRoomLoading(true);
     try {
       const response = await authFetch(
         `${apiUrl}/rooms/create?roomId=${cleanRoomId}&userId=${user.id}&username=${user.username}&isPublic=${isPublic}&maxParticipants=${maxParticipants}`,
         { method: 'POST' }
       );
 
-      
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.message || 'Failed to create room.');
@@ -216,9 +232,10 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
       setRoomSuccess(`Room '${cleanRoomId}' created successfully! Redirecting...`);
       setTimeout(() => {
         onJoin(cleanRoomId, user.id, user.username);
-      }, 1000);
+      }, 800);
     } catch (err: any) {
       setRoomError(err.message || 'Failed to connect to the backend.');
+      setIsCreateRoomLoading(false);
     }
   };
 
@@ -235,10 +252,11 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
     const cleanRoomId = joinRoomId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
     if (!cleanRoomId || !user) return;
 
+    setIsJoinRoomLoading(true);
     try {
       const response = await fetch(`${apiUrl}/rooms/${cleanRoomId}?userId=${user.id}`);
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.message || 'This room does not exist.');
       }
@@ -246,9 +264,28 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
       setRoomSuccess(`Joining room '${cleanRoomId}'...`);
       setTimeout(() => {
         onJoin(cleanRoomId, user.id, user.username);
-      }, 1000);
+      }, 800);
     } catch (err: any) {
       setRoomError(err.message || 'This watch party is not active.');
+      setIsJoinRoomLoading(false);
+    }
+  };
+
+  const handleJoinPublicRoom = async (targetRoomId: string) => {
+    if (!user) return;
+    setJoiningPublicRoomId(targetRoomId);
+    try {
+      const res = await fetch(`${apiUrl}/rooms/${targetRoomId}?userId=${user.id}`);
+      if (res.ok) {
+        onJoin(targetRoomId, user.id, user.username);
+      } else {
+        const data = await res.json();
+        setRoomError(data.message || 'Unable to join this room.');
+        setJoiningPublicRoomId(null);
+      }
+    } catch (e) {
+      setRoomError('Failed to join public watch party.');
+      setJoiningPublicRoomId(null);
     }
   };
 
@@ -265,13 +302,15 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
           <div className="auth-tabs">
             <button
               className={`auth-tab-btn ${authTab === 'login' ? 'active' : ''}`}
-              onClick={() => { setAuthTab('login'); setAuthError(''); }}
+              onClick={() => { if (!isAuthLoading) { setAuthTab('login'); setAuthError(''); } }}
+              disabled={isAuthLoading}
             >
               Sign In
             </button>
             <button
               className={`auth-tab-btn ${authTab === 'register' ? 'active' : ''}`}
-              onClick={() => { setAuthTab('register'); setAuthError(''); }}
+              onClick={() => { if (!isAuthLoading) { setAuthTab('register'); setAuthError(''); } }}
+              disabled={isAuthLoading}
             >
               Create Account
             </button>
@@ -288,6 +327,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
                 onChange={(e) => setAuthUsername(e.target.value)}
                 className="lobby-input"
                 maxLength={25}
+                disabled={isAuthLoading}
                 required
               />
             </div>
@@ -303,6 +343,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
                   onChange={(e) => setAuthEmail(e.target.value)}
                   className="lobby-input"
                   maxLength={50}
+                  disabled={isAuthLoading}
                   required
                 />
               </div>
@@ -317,14 +358,25 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
                 value={authPassword}
                 onChange={(e) => setAuthPassword(e.target.value)}
                 className="lobby-input"
+                disabled={isAuthLoading}
                 required
               />
             </div>
 
             {authError && <div className="lobby-error-message">⚠️ {authError}</div>}
 
-            <button type="submit" className="lobby-submit-btn btn-primary">
-              {authTab === 'login' ? 'Log In' : 'Sign Up & Continue'}
+            <button
+              type="submit"
+              className={`lobby-submit-btn btn-primary ${isAuthLoading ? 'btn-loading' : ''}`}
+              disabled={isAuthLoading}
+            >
+              {isAuthLoading ? (
+                <Spinner size="sm" label={authTab === 'login' ? 'Signing In...' : 'Creating Account...'} />
+              ) : authTab === 'login' ? (
+                'Log In'
+              ) : (
+                'Sign Up & Continue'
+              )}
             </button>
           </form>
         </div>
@@ -360,6 +412,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
                     onChange={(e) => setCreateRoomId(e.target.value)}
                     className="lobby-input"
                     maxLength={30}
+                    disabled={isCreateRoomLoading}
                     required
                   />
                 </div>
@@ -372,6 +425,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
                       value={isPublic ? 'public' : 'private'}
                       onChange={(e) => setIsPublic(e.target.value === 'public')}
                       className="lobby-input lobby-select"
+                      disabled={isCreateRoomLoading}
                     >
                       <option value="public">🌐 Public Party</option>
                       <option value="private">🔒 Private Party</option>
@@ -385,6 +439,7 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
                       value={maxParticipants}
                       onChange={(e) => setMaxParticipants(parseInt(e.target.value, 10))}
                       className="lobby-input lobby-select"
+                      disabled={isCreateRoomLoading}
                     >
                       <option value={2}>2 Viewers</option>
                       <option value={5}>5 Viewers</option>
@@ -396,8 +451,16 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
                   </div>
                 </div>
 
-                <button type="submit" className="btn-primary">
-                  Start Room (Host)
+                <button
+                  type="submit"
+                  className={`btn-primary ${isCreateRoomLoading ? 'btn-loading' : ''}`}
+                  disabled={isCreateRoomLoading}
+                >
+                  {isCreateRoomLoading ? (
+                    <Spinner size="sm" label="Creating Room..." />
+                  ) : (
+                    'Start Room (Host)'
+                  )}
                 </button>
               </form>
             </div>
@@ -416,11 +479,20 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
                     onChange={(e) => setJoinRoomId(e.target.value)}
                     className="lobby-input"
                     maxLength={30}
+                    disabled={isJoinRoomLoading}
                     required
                   />
                 </div>
-                <button type="submit" className="btn-secondary">
-                  Join Active Room
+                <button
+                  type="submit"
+                  className={`btn-secondary ${isJoinRoomLoading ? 'btn-loading' : ''}`}
+                  disabled={isJoinRoomLoading}
+                >
+                  {isJoinRoomLoading ? (
+                    <Spinner size="sm" label="Joining Room..." />
+                  ) : (
+                    'Join Active Room'
+                  )}
                 </button>
               </form>
             </div>
@@ -432,10 +504,15 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
               <h3>🌐 Live Watch Parties Directory</h3>
               <button
                 type="button"
-                className="btn-secondary refresh-directory-btn"
+                className={`btn-secondary refresh-directory-btn ${isRefreshingDirectory ? 'btn-loading' : ''}`}
                 onClick={fetchPublicRooms}
+                disabled={isRefreshingDirectory}
               >
-                🔄 Refresh Directory
+                {isRefreshingDirectory ? (
+                  <Spinner size="xs" label="Refreshing..." />
+                ) : (
+                  '🔄 Refresh Directory'
+                )}
               </button>
             </div>
             {publicRooms.length === 0 ? (
@@ -452,10 +529,15 @@ export const CreateJoinRoom: React.FC<CreateJoinRoomProps> = ({ onJoin }) => {
                     </div>
                     <p className="room-host">👑 Host: {room.hostUsername || 'Unknown'}</p>
                     <button
-                      className="btn-primary join-public-btn"
-                      onClick={() => onJoin(room.roomId, user.id, user.username)}
+                      className={`btn-primary join-public-btn ${joiningPublicRoomId === room.roomId ? 'btn-loading' : ''}`}
+                      onClick={() => handleJoinPublicRoom(room.roomId)}
+                      disabled={joiningPublicRoomId === room.roomId}
                     >
-                      Join Watch Party
+                      {joiningPublicRoomId === room.roomId ? (
+                        <Spinner size="sm" label="Joining..." />
+                      ) : (
+                        'Join Watch Party'
+                      )}
                     </button>
                   </div>
                 ))}
