@@ -1,5 +1,6 @@
 package com.syncstream.hub.config;
 
+// Configures WebSocket endpoints and intercepts STOMP connections to authenticate users using JWT.
 import com.syncstream.hub.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -69,7 +70,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                                 UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
                                         username, null, Collections.emptyList());
                                 accessor.setUser(auth);
-                                log.info("Authenticated WebSocket STOMP connection for user: {} (ID: {})", username, userId);
+                                log.info("Authenticated WebSocket STOMP connection for user: {} (ID: {})", username,
+                                        userId);
                             }
                         }
                     }

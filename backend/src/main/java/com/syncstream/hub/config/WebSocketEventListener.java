@@ -1,5 +1,7 @@
 package com.syncstream.hub.config;
 
+// Handles user disconnections and logs session events to MongoDB.
+
 import com.syncstream.hub.model.mongo.SessionLogEntry;
 import com.syncstream.hub.model.redis.ActiveRoomState;
 import com.syncstream.hub.service.RoomStateService;

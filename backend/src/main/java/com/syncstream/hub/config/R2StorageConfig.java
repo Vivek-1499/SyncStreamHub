@@ -1,5 +1,7 @@
 package com.syncstream.hub.config;
 
+// R2StorageConfig → Configures an S3Client so the application can upload/download files from Cloudflare R2.
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;

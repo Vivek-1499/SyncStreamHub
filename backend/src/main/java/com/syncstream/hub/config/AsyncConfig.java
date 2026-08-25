@@ -1,5 +1,7 @@
 package com.syncstream.hub.config;
 
+//Configures a custom thread pool (mongoAsyncExecutor) for running @Async methods in the background. It controls the number of threads, queue size, and thread names.
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
