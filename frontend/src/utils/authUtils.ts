@@ -12,6 +12,23 @@ export function isTokenExpired(token: string | null): boolean {
       return true;
     }
 
+    // JWT payload
+    //      ↓
+    // Base64URL
+    //      ↓
+    // convert Base64URL → Base64
+    //      ↓
+    // atob()
+    //      ↓
+    // decode Base64
+    //      ↓
+    // characters
+    //      ↓
+    // convert characters → %XX format
+    //      ↓
+    // decodeURIComponent()
+    //      ↓
+    // normal JSON string
     const payloadBase64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
     const jsonPayload = decodeURIComponent(
       atob(payloadBase64)
